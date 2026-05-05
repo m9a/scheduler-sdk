@@ -1,8 +1,0 @@
-/Users/megha/src/scheduler-sdk/annotations/src/main/java/com/scheduler/annotation/AfterJob.java
-/Users/megha/src/scheduler-sdk/annotations/src/main/java/com/scheduler/annotation/BeforeJob.java
-/Users/megha/src/scheduler-sdk/annotations/src/main/java/com/scheduler/annotation/Context.java
-/Users/megha/src/scheduler-sdk/annotations/src/main/java/com/scheduler/annotation/Job.java
-/Users/megha/src/scheduler-sdk/annotations/src/main/java/com/scheduler/annotation/Param.java
-/Users/megha/src/scheduler-sdk/annotations/src/main/java/com/scheduler/annotation/ResourceProfile.java
-/Users/megha/src/scheduler-sdk/annotations/src/main/java/com/scheduler/annotation/Task.java
-/Users/megha/src/scheduler-sdk/annotations/src/main/java/com/scheduler/annotation/processor/JobProcessor.java
