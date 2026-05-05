@@ -1,0 +1,14 @@
+com/scheduler/sdk/ExecutionPayload.class
+com/scheduler/sdk/TaskStatusUpdate.class
+com/scheduler/sdk/TaskContext$TeeOutputStream.class
+com/scheduler/sdk/Task.class
+com/scheduler/sdk/meta/ResourceRequirements.class
+com/scheduler/sdk/meta/ParamDescriptor.class
+com/scheduler/sdk/meta/TaskDescriptor.class
+com/scheduler/sdk/JobProcess.class
+com/scheduler/sdk/DefaultJobContext.class
+com/scheduler/sdk/TaskContext.class
+com/scheduler/sdk/meta/JobDescriptor.class
+com/scheduler/sdk/TaskStatus.class
+com/scheduler/sdk/JobReporter.class
+com/scheduler/sdk/JobContext.class
