@@ -3,8 +3,11 @@ package com.scheduler.sdk;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.net.URI;
 import java.net.http.HttpClient;
+import java.net.http.WebSocket;
 import java.util.List;
+import java.util.concurrent.CompletionStage;
 
 /**
  * Runs inside the job process (the child JVM spawned by
@@ -33,26 +36,29 @@ import java.util.List;
  * JAR as a child process: {@code java -cp <artifactUri> <mainClass>}. Two environment
  * variables are set by WorkerAgent:
  * <ul>
- *   <li>{@code AGENT_CALLBACK_URL} — WorkerAgent's HTTP server URL for receiving task events</li>
- *   <li>{@code JOB_ID} — the job execution ID assigned by the coordinator</li>
+ *   <li>{@code EXECUTION_PAYLOAD} — base64(JSON) with workerAgentUrl, jobId, params</li>
+ *   <li>workerAgentUrl is a WebSocket URL ({@code ws://host:port})</li>
  * </ul>
  *
- * <p><b>What it does:</b> Runs tasks sequentially, creates a {@link TaskContext}
- * per task that handles lifecycle status (RUNNING, COMPLETED, FAILED), stdout/stderr
- * capture, and duration tracking — all sent to WorkerAgent via HTTP POST.
+ * <p><b>What it does:</b> Opens a single WebSocket connection to WorkerAgent,
+ * runs tasks sequentially, creates a {@link TaskContext} per task that handles
+ * lifecycle status (RUNNING, COMPLETED, FAILED), stdout/stderr capture, and
+ * duration tracking — all sent over the shared WebSocket connection.
  *
  * <pre>
  *  Job process (child JVM)                     Worker JVM
  *  ───────────────────────                     ──────────
  *  main() {
  *    JobProcess.run(tasks)
+ *      ├─ open WebSocket ──────────────────► WorkerAgent
  *      ├─ ctx.started()
- *      │    └─ POST RUNNING ──HTTP──► WorkerAgent
+ *      │    └─ send RUNNING ──WebSocket──►
  *      ├─ task.execute(ctx)
  *      │    ├─ ctx.progress(0.5, "halfway")
  *      │    └─ ctx.metric("rows", 1000)
  *      └─ ctx.completed()
- *           └─ POST COMPLETED + duration + output ──HTTP──► WorkerAgent
+ *           └─ send COMPLETED + duration + output ──WebSocket──►
+ *      └─ close WebSocket
  *  }
  * </pre>
  */
@@ -80,30 +86,47 @@ public final class JobProcess {
     }
 
     /**
-     * Runs tasks sequentially. Creates a {@link TaskContext} per task that manages
-     * lifecycle status, stdout capture, and duration — all sent via HTTP to WorkerAgent.
+     * Runs tasks sequentially. Opens one WebSocket connection for the entire job,
+     * creates a {@link TaskContext} per task that manages lifecycle status, stdout
+     * capture, and duration — all sent over the shared connection.
      */
     public static void run(List<Task> tasks, String jobId, String callbackUrl) {
-        HttpClient httpClient = HttpClient.newHttpClient();
+        WebSocket webSocket = HttpClient.newHttpClient().newWebSocketBuilder()
+                .buildAsync(URI.create(callbackUrl), new WebSocket.Listener() {
+                    @Override
+                    public CompletionStage<?> onClose(WebSocket webSocket, int statusCode, String reason) {
+                        log.debug("WebSocket closed by server: statusCode={}, reason={}", statusCode, reason);
+                        return null;
+                    }
+                })
+                .join();
 
-        for (int i = 0; i < tasks.size(); i++) {
-            Task task = tasks.get(i);
-            TaskContext ctx = new TaskContext(httpClient, callbackUrl, jobId, i, task.name());
+        try {
+            for (int i = 0; i < tasks.size(); i++) {
+                Task task = tasks.get(i);
+                TaskContext ctx = new TaskContext(webSocket, jobId, i, task.name());
 
-            log.info("Starting task {} ({}/{})", task.name(), i + 1, tasks.size());
-            ctx.started();
+                log.info("Starting task {} ({}/{})", task.name(), i + 1, tasks.size());
+                ctx.started();
 
+                try {
+                    task.execute(ctx);
+                    log.info("Task {} completed", task.name());
+                    ctx.completed();
+                } catch (Exception e) {
+                    log.error("Task {} failed: {}", task.name(), e.getMessage(), e);
+                    ctx.failed(e.getMessage());
+                    return;
+                }
+            }
+
+            log.info("All {} tasks completed", tasks.size());
+        } finally {
             try {
-                task.execute(ctx);
-                log.info("Task {} completed", task.name());
-                ctx.completed();
+                webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "done").join();
             } catch (Exception e) {
-                log.error("Task {} failed: {}", task.name(), e.getMessage(), e);
-                ctx.failed(e.getMessage());
-                return;
+                log.warn("Failed to close WebSocket: {}", e.getMessage());
             }
         }
-
-        log.info("All {} tasks completed", tasks.size());
     }
 }

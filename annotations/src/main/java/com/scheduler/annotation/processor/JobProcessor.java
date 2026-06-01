@@ -338,6 +338,7 @@ public class JobProcessor extends AbstractProcessor {
             body.addStatement("e.addSuppressed(suppressed)");
             body.endControlFlow();
         }
+        body.addStatement("e.printStackTrace()");
         body.addStatement("$T.exit(1)", System.class);
         body.endControlFlow();
 

@@ -7,7 +7,7 @@ Supports two invocation modes:
 
 Decodes the execution payload (containing workerAgentUrl, jobId, params),
 loads the user's script, discovers the @job-decorated class, and runs its
-@task methods while reporting per-task status back to WorkerAgent via HTTP.
+@task methods while reporting per-task status back to WorkerAgent via WebSocket.
 """
 
 import base64
@@ -54,10 +54,15 @@ def main() -> None:
               file=sys.stderr)
         sys.exit(1)
 
+    from job_runner.metrics import setup_mlflow
+    setup_mlflow(job_class._job_meta["id"], job_id)
+
     try:
         run_job(job_class, reporter, params)
     except Exception:
         sys.exit(1)
+    finally:
+        reporter.close()
 
 
 def _load_script(path: str):

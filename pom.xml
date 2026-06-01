@@ -13,6 +13,7 @@
         <module>java-sdk</module>
         <module>annotations</module>
         <module>sample-job</module>
+        <module>sample-failing-job</module>
     </modules>
 
     <properties>
@@ -20,6 +21,7 @@
         <maven.compiler.target>21</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <slf4j.version>2.0.12</slf4j.version>
+        <protobuf.version>3.25.3</protobuf.version>
         <junit.version>5.10.2</junit.version>
     </properties>
 
@@ -34,6 +36,11 @@
                 <groupId>com.scheduler</groupId>
                 <artifactId>annotations</artifactId>
                 <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.google.protobuf</groupId>
+                <artifactId>protobuf-java</artifactId>
+                <version>${protobuf.version}</version>
             </dependency>
             <dependency>
                 <groupId>org.slf4j</groupId>

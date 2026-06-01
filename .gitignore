@@ -1,5 +1,38 @@
 target/
+!**/src/main/**/target/
+!**/src/test/**/target/
+
+### Java ###
 *.class
 *.jar
+!**/src/main/**/target/*.jar
+
+### IntelliJ IDEA ###
 .idea/
+*.iws
 *.iml
+*.ipr
+
+### Eclipse ###
+.apt_generated
+.classpath
+.factorypath
+.project
+.settings
+
+### VS Code ###
+.vscode/
+
+### Python ###
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+*.egg-info/
+dist/
+
+### Mac OS ###
+.DS_Store
+
+### Claude ###
+CLAUDE.md

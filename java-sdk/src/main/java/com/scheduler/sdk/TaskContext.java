@@ -7,14 +7,12 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.io.PrintStream;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
+import java.net.http.WebSocket;
+import java.nio.ByteBuffer;
 
 /**
  * Provided by JobProcess to each task during execution. Manages the full
- * task lifecycle: sends status updates to WorkerAgent via HTTP, captures
+ * task lifecycle: sends status updates to WorkerAgent via WebSocket, captures
  * per-task stdout/stderr, and tracks duration.
  *
  * <p><b>For task authors:</b> Use {@link #progress} and {@link #metric}
@@ -36,8 +34,7 @@ public final class TaskContext {
 
     private static final Logger log = LoggerFactory.getLogger(TaskContext.class);
 
-    private final HttpClient httpClient;
-    private final String callbackUrl;
+    private final WebSocket webSocket;
     private final String jobId;
     private final int taskIndex;
     private final String taskName;
@@ -49,22 +46,21 @@ public final class TaskContext {
 
     /**
      * Production constructor — called by JobProcess to create a context for each task.
+     * All tasks in a job share a single WebSocket connection.
      */
-    TaskContext(HttpClient httpClient, String callbackUrl, String jobId, int taskIndex, String taskName) {
-        this.httpClient = httpClient;
-        this.callbackUrl = callbackUrl;
+    TaskContext(WebSocket webSocket, String jobId, int taskIndex, String taskName) {
+        this.webSocket = webSocket;
         this.jobId = jobId;
         this.taskIndex = taskIndex;
         this.taskName = taskName;
     }
 
     /**
-     * Test constructor — progress and metric just log, no HTTP.
+     * Test constructor — progress and metric just log, no WebSocket.
      * For task authors writing unit tests against their Task implementations.
      */
     public TaskContext() {
-        this.httpClient = null;
-        this.callbackUrl = null;
+        this.webSocket = null;
         this.jobId = null;
         this.taskIndex = 0;
         this.taskName = null;
@@ -95,7 +91,7 @@ public final class TaskContext {
         System.setOut(teeOut);
         System.setErr(teeErr);
 
-        sendStatus(new TaskStatusUpdate(jobId, taskIndex, taskName, TaskStatus.RUNNING, null));
+        sendStatus(new StatusUpdate(jobId, taskIndex, taskName, TaskStatus.RUNNING, null));
     }
 
     /**
@@ -105,7 +101,7 @@ public final class TaskContext {
     void completed() {
         restoreStreams();
         long durationMs = System.currentTimeMillis() - startTimeMs;
-        sendStatus(new TaskStatusUpdate(jobId, taskIndex, taskName, TaskStatus.COMPLETED, null,
+        sendStatus(new StatusUpdate(jobId, taskIndex, taskName, TaskStatus.COMPLETED, null,
                 durationMs, capturedOutput()));
     }
 
@@ -116,7 +112,7 @@ public final class TaskContext {
     void failed(String error) {
         restoreStreams();
         long durationMs = System.currentTimeMillis() - startTimeMs;
-        sendStatus(new TaskStatusUpdate(jobId, taskIndex, taskName, TaskStatus.FAILED, error,
+        sendStatus(new StatusUpdate(jobId, taskIndex, taskName, TaskStatus.FAILED, error,
                 durationMs, capturedOutput()));
     }
 
@@ -139,22 +135,12 @@ public final class TaskContext {
         }
     }
 
-    private void sendStatus(TaskStatusUpdate update) {
-        if (httpClient == null) {
+    private void sendStatus(StatusUpdate update) {
+        if (webSocket == null) {
             return;
         }
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(callbackUrl + "/task-status"))
-                .header("Content-Type", "application/json")
-                .POST(HttpRequest.BodyPublishers.ofString(update.toJson()))
-                .build();
-
         try {
-            HttpResponse<Void> response = httpClient.send(request, HttpResponse.BodyHandlers.discarding());
-            if (response.statusCode() != 200) {
-                log.warn("Status report got HTTP {}: task={}, status={}",
-                        response.statusCode(), taskName, update.status());
-            }
+            webSocket.sendBinary(ByteBuffer.wrap(update.toProto()), true).join();
         } catch (Exception e) {
             log.error("Failed to report status for task {}: {}", taskName, e.getMessage());
         }
