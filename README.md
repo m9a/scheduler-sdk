@@ -158,11 +158,26 @@ Inside the container:
 
 ## Build
 
-```bash
-# Java SDK
-mvn compile -pl java-sdk
+### Prerequisites
 
-# Python tests
+The `scheduler-client` module depends on `scheduler-proto` from the [scheduler](../scheduler) repo. Install it to your local Maven repository first:
+
+```bash
+cd ../scheduler
+mvn install -pl scheduler-proto
+```
+
+### Compile
+
+```bash
+mvn compile -pl java-sdk           # Java SDK only
+mvn compile -pl scheduler-client   # client library only
+mvn compile                        # all modules
+```
+
+### Python
+
+```bash
 python3 -m pytest py-sdk/tests/
 
 # Regenerate Python proto bindings (requires protoc)
