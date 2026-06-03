@@ -13,6 +13,7 @@
         <module>java-sdk</module>
         <module>annotations</module>
         <module>scheduler-client</module>
+        <module>scheduler-cli</module>
         <module>sample-job</module>
         <module>sample-failing-job</module>
     </modules>
@@ -43,6 +44,16 @@
                 <groupId>com.scheduler</groupId>
                 <artifactId>scheduler-proto</artifactId>
                 <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.scheduler</groupId>
+                <artifactId>scheduler-client</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>info.picocli</groupId>
+                <artifactId>picocli</artifactId>
+                <version>4.7.6</version>
             </dependency>
             <dependency>
                 <groupId>com.google.protobuf</groupId>
