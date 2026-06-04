@@ -5,6 +5,7 @@ import com.scheduler.client.SchedulerClient;
 import com.scheduler.client.SchedulerException;
 import com.scheduler.proto.v1.InputFile;
 import com.scheduler.proto.v1.Job;
+import com.scheduler.proto.v1.ResourceRequirements;
 import com.scheduler.proto.v1.SubmitJobRequest;
 import com.scheduler.proto.v1.SubmitJobResponse;
 import picocli.CommandLine.Command;
@@ -15,7 +16,9 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Callable;
 
@@ -48,6 +51,19 @@ class SubmitCommand implements Callable<Integer> {
                     + "e.g. --input data.csv=./training_data.csv")
     Map<String, String> inputFiles = new LinkedHashMap<>();
 
+    @Option(names = "--memory", defaultValue = "0",
+            description = "Minimum memory in MB required by the job (default: ${DEFAULT-VALUE}, 0 = no constraint)")
+    int memory;
+
+    @Option(names = "--cpus", defaultValue = "0",
+            description = "Minimum CPU cores required by the job (default: ${DEFAULT-VALUE}, 0 = no constraint)")
+    int cpus;
+
+    @Option(names = "--capability",
+            description = "Worker capability required by the job (repeatable), "
+                    + "e.g. --capability gpu --capability ssd")
+    List<String> capabilities = new ArrayList<>();
+
     @Option(names = "--priority", defaultValue = "0",
             description = "Scheduling priority — higher values are picked first (default: ${DEFAULT-VALUE})")
     int priority;
@@ -67,29 +83,31 @@ class SubmitCommand implements Callable<Integer> {
         String resolvedImage = resolveImage(image);
 
         try (SchedulerClient client = parent.connect()) {
-            Job job;
+            SubmitJobRequest.Builder request = SubmitJobRequest.newBuilder()
+                    .setName(name)
+                    .setArtifactUri(resolvedImage)
+                    .putAllParams(params)
+                    .setPriority(priority);
 
-            if (inputFiles.isEmpty() && priority == 0) {
-                job = client.submitJob(name, resolvedImage, params);
-            } else {
-                SubmitJobRequest.Builder request = SubmitJobRequest.newBuilder()
-                        .setName(name)
-                        .setArtifactUri(resolvedImage)
-                        .putAllParams(params)
-                        .setPriority(priority);
-
-                for (Map.Entry<String, String> entry : inputFiles.entrySet()) {
-                    Path path = Path.of(entry.getValue());
-                    byte[] content = Files.readAllBytes(path);
-                    request.addInputFiles(InputFile.newBuilder()
-                            .setName(entry.getKey())
-                            .setContent(ByteString.copyFrom(content))
-                            .build());
-                }
-
-                SubmitJobResponse response = client.submitJob(request.build());
-                job = response.getJob();
+            if (memory > 0 || cpus > 0 || !capabilities.isEmpty()) {
+                request.setResources(ResourceRequirements.newBuilder()
+                        .setMemoryMb(memory)
+                        .setCpuCores(cpus)
+                        .addAllCapabilities(capabilities)
+                        .build());
             }
+
+            for (Map.Entry<String, String> entry : inputFiles.entrySet()) {
+                Path path = Path.of(entry.getValue());
+                byte[] content = Files.readAllBytes(path);
+                request.addInputFiles(InputFile.newBuilder()
+                        .setName(entry.getKey())
+                        .setContent(ByteString.copyFrom(content))
+                        .build());
+            }
+
+            SubmitJobResponse response = client.submitJob(request.build());
+            Job job = response.getJob();
 
             System.out.println("Job submitted: " + job.getId());
             System.out.println("Status: " + job.getStatus().name().replace("JOB_STATUS_", ""));

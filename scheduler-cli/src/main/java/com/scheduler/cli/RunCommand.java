@@ -138,12 +138,7 @@ class RunCommand implements Callable<Integer> {
     }
 
     private void runJob(Preset preset) {
-        try (SchedulerClient client = SchedulerClient.builder()
-                .host("localhost")
-                .port(9090)
-                .deadline(Duration.ofSeconds(30))
-                .maxRetries(3)
-                .build()) {
+        try (SchedulerClient client = parent.connect()) {
 
             System.out.println();
             System.out.println("Submitting " + preset.name + "...");

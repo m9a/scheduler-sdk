@@ -52,7 +52,6 @@ public class JobProcessor extends AbstractProcessor {
 
     private static final ClassName JOB_DESCRIPTOR = ClassName.get("com.scheduler.sdk.meta", "JobDescriptor");
     private static final ClassName PARAM_DESCRIPTOR = ClassName.get("com.scheduler.sdk.meta", "ParamDescriptor");
-    private static final ClassName RESOURCE_REQUIREMENTS = ClassName.get("com.scheduler.sdk.meta", "ResourceRequirements");
     private static final ClassName TASK_DESCRIPTOR = ClassName.get("com.scheduler.sdk.meta", "TaskDescriptor");
     private static final ClassName EXECUTION_PAYLOAD = ClassName.get("com.scheduler.sdk", "ExecutionPayload");
     private static final ClassName JOB_REPORTER = ClassName.get("com.scheduler.sdk", "JobReporter");
@@ -236,7 +235,6 @@ public class JobProcessor extends AbstractProcessor {
 
         descriptorFqns.add(packageName + "." + descriptorName);
 
-        ResourceProfile res = jobAnn.resource();
         List<ExecutableElement> taskMethods = getTaskMethods(jobClass);
         List<ParamInfo> paramInfos = getConstructorParams(jobClass);
         ClassName jobClassName = ClassName.get(packageName, className);
@@ -252,11 +250,6 @@ public class JobProcessor extends AbstractProcessor {
 
         MethodSpec maxRetries = overrideMethod("maxRetries", int.class)
                 .addStatement("return $L", jobAnn.maxRetries()).build();
-
-        MethodSpec resources = overrideMethod("resources", RESOURCE_REQUIREMENTS)
-                .addStatement("return new $T($L, $L, $L)",
-                        RESOURCE_REQUIREMENTS, res.minMemoryMb(), res.cpuCores(), setOfStrings(res.labels()))
-                .build();
 
         MethodSpec parameters = overrideMethod("parameters",
                 ParameterizedTypeName.get(ClassName.get(List.class), PARAM_DESCRIPTOR))
@@ -278,7 +271,6 @@ public class JobProcessor extends AbstractProcessor {
                 .addMethod(description)
                 .addMethod(timeoutSeconds)
                 .addMethod(maxRetries)
-                .addMethod(resources)
                 .addMethod(parameters)
                 .addMethod(tasks)
                 .addMethod(jobClassMethod)
@@ -398,16 +390,6 @@ public class JobProcessor extends AbstractProcessor {
     }
 
     // ── CodeBlock builders ─────────────────────────────────────────────────
-
-    /** Produces {@code Set.of("a", "b")}. */
-    private static CodeBlock setOfStrings(String[] values) {
-        CodeBlock.Builder b = CodeBlock.builder().add("$T.of(", Set.class);
-        for (int i = 0; i < values.length; i++) {
-            if (i > 0) b.add(", ");
-            b.add("$S", values[i]);
-        }
-        return b.add(")").build();
-    }
 
     /** Produces {@code List.of("a", "b")}. */
     private static CodeBlock listOfStrings(String[] values) {

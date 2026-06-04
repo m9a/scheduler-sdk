@@ -5,6 +5,8 @@ import picocli.CommandLine;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
 
+import java.io.IOException;
+import java.nio.file.Path;
 import java.time.Duration;
 
 @Command(name = "scheduler",
@@ -21,16 +23,42 @@ import java.time.Duration;
         })
 public class SchedulerCli implements Runnable {
 
-    @Option(names = "--host", defaultValue = "localhost", description = "Coordinator hostname (default: ${DEFAULT-VALUE})")
+    @Option(names = "--config",
+            description = "Path to YAML config file (default: ~/.scheduler/config.yaml)")
+    Path configPath;
+
+    @Option(names = "--host", description = "Coordinator hostname (overrides config file)")
     String host;
 
-    @Option(names = "--port", defaultValue = "9090", description = "Coordinator port (default: ${DEFAULT-VALUE})")
-    int port;
+    @Option(names = "--port", description = "Coordinator port (overrides config file)")
+    Integer port;
+
+    private CliConfig config;
+
+    CliConfig config() {
+        if (config == null) {
+            if (configPath != null) {
+                try {
+                    config = CliConfig.load(configPath);
+                } catch (IOException e) {
+                    System.err.println("Failed to load config from " + configPath + ": " + e.getMessage());
+                    config = new CliConfig();
+                }
+            } else {
+                config = CliConfig.loadDefault();
+            }
+        }
+        return config;
+    }
 
     SchedulerClient connect() {
+        CliConfig cfg = config();
+        String resolvedHost = host != null ? host : cfg.getCoordinator().getHost();
+        int resolvedPort = port != null ? port : cfg.getCoordinator().getPort();
+
         return SchedulerClient.builder()
-                .host(host)
-                .port(port)
+                .host(resolvedHost)
+                .port(resolvedPort)
                 .deadline(Duration.ofSeconds(30))
                 .build();
     }

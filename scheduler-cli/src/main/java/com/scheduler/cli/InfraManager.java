@@ -122,12 +122,26 @@ class InfraManager implements AutoCloseable {
 
     private void startWorker(String jarPath) throws IOException {
         log("Starting worker...");
+
+        Path configFile = SCHEDULER_DIR.resolve("worker.yaml");
+        Files.writeString(configFile, String.join("\n",
+                "coordinator:",
+                "  host: localhost",
+                "  port: " + COORDINATOR_PORT,
+                "",
+                "worker:",
+                "  hostname: host.docker.internal",
+                "  capacity: 1",
+                "",
+                "docker:",
+                "  network: scheduler-net",
+                "",
+                "mlflow:",
+                "  trackingUri: http://mlflow:5000",
+                ""));
+
         ProcessBuilder pb = new ProcessBuilder(
-                "java",
-                "-Ddocker.network=scheduler-net",
-                "-Dmlflow.trackingUri=http://mlflow:5000",
-                "-jar", jarPath,
-                "localhost", String.valueOf(COORDINATOR_PORT), "host.docker.internal", "1")
+                "java", "-jar", jarPath, "--config", configFile.toString())
                 .redirectErrorStream(true);
         workerProcess = pb.start();
         streamOutputAsync(workerProcess.getInputStream(), "worker");
