@@ -1,6 +1,7 @@
 package com.scheduler.client;
 
 import com.scheduler.proto.v1.*;
+import com.scheduler.proto.v1.ResourceRequirements;
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
 import io.grpc.Status;
@@ -73,6 +74,29 @@ public class SchedulerClient implements AutoCloseable {
                 .putAllParams(params)
                 .build();
         return submitJob(request).getJob();
+    }
+
+    /**
+     * Submits a job with resource requirements for capability-based placement.
+     */
+    public Job submitJob(String name, String artifactUri, Map<String, String> params,
+                         int memoryMb, int cpuCores, java.util.Collection<String> capabilities) {
+        SubmitJobRequest.Builder request = SubmitJobRequest.newBuilder()
+                .setName(name)
+                .setArtifactUri(artifactUri)
+                .putAllParams(params);
+
+        if (memoryMb > 0 || cpuCores > 0 || (capabilities != null && !capabilities.isEmpty())) {
+            ResourceRequirements.Builder resources = ResourceRequirements.newBuilder()
+                    .setMemoryMb(memoryMb)
+                    .setCpuCores(cpuCores);
+            if (capabilities != null) {
+                resources.addAllCapabilities(capabilities);
+            }
+            request.setResources(resources.build());
+        }
+
+        return submitJob(request.build()).getJob();
     }
 
     public Job getJobStatus(String jobId) {

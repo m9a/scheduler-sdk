@@ -39,9 +39,6 @@ public interface JobDescriptor {
     /** How many times a failed job may be retried, from {@code @Job(maxRetries = ...)}. */
     int maxRetries();
 
-    /** Memory, CPU, and label requirements, from {@code @ResourceProfile}. */
-    ResourceRequirements resources();
-
     /** Schema of parameters the job accepts, derived from {@code @Param} on the constructor. */
     List<ParamDescriptor> parameters();
 

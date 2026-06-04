@@ -27,6 +27,4 @@ public @interface Job {
     int timeoutSeconds() default 0;
 
     int maxRetries() default 0;
-
-    ResourceProfile resource() default @ResourceProfile;
 }

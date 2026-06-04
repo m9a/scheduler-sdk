@@ -5,7 +5,6 @@ import com.scheduler.annotation.BeforeJob;
 import com.scheduler.annotation.Context;
 import com.scheduler.annotation.Job;
 import com.scheduler.annotation.Param;
-import com.scheduler.annotation.ResourceProfile;
 import com.scheduler.annotation.Task;
 import com.scheduler.sdk.JobContext;
 
@@ -16,8 +15,7 @@ import com.scheduler.sdk.JobContext;
 @Job(id = "daily-sales-etl",
      description = "Daily sales ETL pipeline",
      timeoutSeconds = 3600,
-     maxRetries = 2,
-     resource = @ResourceProfile(minMemoryMb = 512, cpuCores = 2))
+     maxRetries = 2)
 public class DailySalesEtlJob {
 
     private final String region;
