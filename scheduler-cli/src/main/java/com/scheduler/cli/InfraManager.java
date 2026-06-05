@@ -19,9 +19,10 @@ import java.util.concurrent.TimeUnit;
 class InfraManager implements AutoCloseable {
 
     private static final Path SCHEDULER_DIR = Path.of(System.getProperty("user.home"), ".scheduler");
-    private static final int COORDINATOR_PORT = 9090;
 
     private Path composePath;
+    private Path configFile;
+    private CliConfig config;
     private Path logFile;
     private PrintWriter logWriter;
     private Process coordinatorProcess;
@@ -39,6 +40,7 @@ class InfraManager implements AutoCloseable {
         logWriter = new PrintWriter(new FileWriter(logFile.toFile()), true);
 
         extractComposeFile();
+        extractConfig();
         startDockerCompose();
         waitForServices();
         startCoordinator(coordinatorJar);
@@ -56,6 +58,19 @@ class InfraManager implements AutoCloseable {
         }
     }
 
+    // The same config.yaml is consumed by both the worker (coordinator/docker/minio/mlflow)
+    // and the CLI's readiness checks below, so service URLs live in one place.
+    private void extractConfig() throws IOException {
+        configFile = SCHEDULER_DIR.resolve("config.yaml");
+        try (InputStream in = getClass().getResourceAsStream("/config.yaml")) {
+            if (in == null) {
+                throw new IOException("config.yaml not found in JAR resources");
+            }
+            Files.copy(in, configFile, StandardCopyOption.REPLACE_EXISTING);
+        }
+        config = CliConfig.load(configFile);
+    }
+
     private void startDockerCompose() throws Exception {
         log("Starting control plane...");
         ProcessBuilder pb = new ProcessBuilder(
@@ -70,10 +85,10 @@ class InfraManager implements AutoCloseable {
     }
 
     private void waitForServices() throws Exception {
-        waitForUrl("MinIO", "http://localhost:9000/minio/health/ready", 60);
-        waitForUrl("Registry", "http://localhost:5050/v2/", 30);
+        waitForUrl("MinIO", config.getMinio().getEndpoint() + "/minio/health/ready", 60);
+        waitForUrl("Registry", config.getRegistry().getUrl() + "/v2/", 30);
         // MLflow takes longer — installs psycopg2-binary + boto3 on first start
-        waitForUrl("MLflow", "http://localhost:5000/health", 120);
+        waitForUrl("MLflow", config.getMlflow().getHealthUrl(), 120);
     }
 
     private void waitForUrl(String name, String url, int timeoutSeconds) throws Exception {
@@ -96,20 +111,22 @@ class InfraManager implements AutoCloseable {
     }
 
     private void startCoordinator(String jarPath) throws IOException {
-        log("Starting coordinator (port " + COORDINATOR_PORT + ")...");
+        int port = config.getCoordinator().getPort();
+        log("Starting coordinator (port " + port + ")...");
         ProcessBuilder pb = new ProcessBuilder(
-                "java", "-jar", jarPath, String.valueOf(COORDINATOR_PORT))
+                "java", "-jar", jarPath, String.valueOf(port))
                 .redirectErrorStream(true);
         coordinatorProcess = pb.start();
         streamOutputAsync(coordinatorProcess.getInputStream(), "coordinator");
     }
 
     private void waitForCoordinator() throws Exception {
+        CliConfig.Coordinator coordinator = config.getCoordinator();
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);
         while (System.nanoTime() < deadline) {
             try {
                 java.net.Socket socket = new java.net.Socket();
-                socket.connect(new java.net.InetSocketAddress("localhost", COORDINATOR_PORT), 500);
+                socket.connect(new java.net.InetSocketAddress(coordinator.getHost(), coordinator.getPort()), 500);
                 socket.close();
                 log("  Coordinator ready");
                 return;
@@ -122,23 +139,6 @@ class InfraManager implements AutoCloseable {
 
     private void startWorker(String jarPath) throws IOException {
         log("Starting worker...");
-
-        Path configFile = SCHEDULER_DIR.resolve("worker.yaml");
-        Files.writeString(configFile, String.join("\n",
-                "coordinator:",
-                "  host: localhost",
-                "  port: " + COORDINATOR_PORT,
-                "",
-                "worker:",
-                "  hostname: host.docker.internal",
-                "  capacity: 1",
-                "",
-                "docker:",
-                "  network: scheduler-net",
-                "",
-                "mlflow:",
-                "  trackingUri: http://mlflow:5000",
-                ""));
 
         ProcessBuilder pb = new ProcessBuilder(
                 "java", "-jar", jarPath, "--config", configFile.toString())

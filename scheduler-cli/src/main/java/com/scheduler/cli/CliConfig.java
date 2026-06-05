@@ -20,6 +20,9 @@ class CliConfig {
             ".scheduler", "config.yaml");
 
     private Coordinator coordinator = new Coordinator();
+    private Minio minio = new Minio();
+    private Mlflow mlflow = new Mlflow();
+    private Registry registry = new Registry();
 
     static CliConfig load(Path path) throws IOException {
         ObjectMapper mapper = new ObjectMapper(new YAMLFactory());
@@ -44,6 +47,15 @@ class CliConfig {
     public Coordinator getCoordinator() { return coordinator; }
     public void setCoordinator(Coordinator coordinator) { this.coordinator = coordinator; }
 
+    public Minio getMinio() { return minio; }
+    public void setMinio(Minio minio) { this.minio = minio; }
+
+    public Mlflow getMlflow() { return mlflow; }
+    public void setMlflow(Mlflow mlflow) { this.mlflow = mlflow; }
+
+    public Registry getRegistry() { return registry; }
+    public void setRegistry(Registry registry) { this.registry = registry; }
+
     @JsonIgnoreProperties(ignoreUnknown = true)
     public static class Coordinator {
         private String host = "localhost";
@@ -53,5 +65,29 @@ class CliConfig {
         public void setHost(String host) { this.host = host; }
         public int getPort() { return port; }
         public void setPort(int port) { this.port = port; }
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class Minio {
+        private String endpoint;
+
+        public String getEndpoint() { return endpoint; }
+        public void setEndpoint(String endpoint) { this.endpoint = endpoint; }
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class Mlflow {
+        private String healthUrl;
+
+        public String getHealthUrl() { return healthUrl; }
+        public void setHealthUrl(String healthUrl) { this.healthUrl = healthUrl; }
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class Registry {
+        private String url;
+
+        public String getUrl() { return url; }
+        public void setUrl(String url) { this.url = url; }
     }
 }
