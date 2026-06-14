@@ -1,6 +1,6 @@
 # scheduler-cli
 
-Interactive command-line tool for the distributed job scheduler. Starts all infrastructure (MinIO, MLflow, Docker registry, coordinator, worker), presents a menu of sample jobs, streams job output in real time, and tears everything down on exit.
+Interactive command-line tool for the distributed job scheduler. Starts all infrastructure (MinIO, MLflow, Docker registry, Prometheus, Grafana, coordinator, worker), presents a menu of sample jobs, streams job output in real time, and tears everything down on exit.
 
 ## Prerequisites
 
@@ -63,13 +63,16 @@ Starting control plane...
   MinIO ready
   MLflow ready
   Registry ready
+  Prometheus ready
+  Grafana ready
 Starting coordinator (port 9090)... ready
 Starting worker... started
 
-Infrastructure:
-  MLflow:    http://localhost:5000
-  MinIO:     http://localhost:9000  (console: http://localhost:9001)
-  Registry:  http://localhost:5050
+Stack ready. UIs:
+  Grafana (dashboards):  http://localhost:3000
+  Prometheus:            http://localhost:9095
+  MinIO console:         http://localhost:9001
+  MLflow:                http://localhost:5000
 
 Logs: ~/.scheduler/logs/session-2026-06-02T14-30-05.log
 
@@ -123,7 +126,7 @@ scheduler download <job-id> model.pt
 
 | Component | Managed by | Start | Stop |
 |-----------|-----------|-------|------|
-| MinIO, PostgreSQL, MLflow, Registry | docker-compose | `scheduler` / `scheduler run` | Exit menu (`q`) or Ctrl+C |
+| MinIO, PostgreSQL, MLflow, Registry, Prometheus, Grafana | docker-compose | `scheduler` / `scheduler run` | Exit menu (`q`) or Ctrl+C |
 | Coordinator | Local Java process | `scheduler` / `scheduler run` | Exit menu (`q`) or Ctrl+C |
 | Worker | Local Java process | `scheduler` / `scheduler run` | Exit menu (`q`) or Ctrl+C |
 | Job containers | Worker (via `docker run`) | When job is submitted | Container exits when job finishes |

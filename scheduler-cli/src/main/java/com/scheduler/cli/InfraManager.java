@@ -12,13 +12,26 @@ import java.util.concurrent.TimeUnit;
 
 /**
  * Manages the lifecycle of all infrastructure: docker-compose services
- * (MinIO, PostgreSQL, MLflow, Docker registry) and local Java processes
- * (coordinator, worker). Streams all process output to both the terminal
- * and a session log file.
+ * (MinIO, PostgreSQL, MLflow, Docker registry, Prometheus, Grafana) and local
+ * Java processes (coordinator, worker). Streams all process output to both the
+ * terminal and a session log file.
  */
 class InfraManager implements AutoCloseable {
 
     private static final Path SCHEDULER_DIR = Path.of(System.getProperty("user.home"), ".scheduler");
+
+    // Monitoring UIs — ports fixed in docker-compose.control-plane.yml.
+    private static final String PROMETHEUS_URL = "http://localhost:9095";
+    private static final String GRAFANA_URL = "http://localhost:3000";
+
+    // Prometheus/Grafana provisioning bundled in the JAR; extracted alongside the
+    // compose file so its relative volume mounts (./metrics/...) resolve.
+    private static final String[] METRICS_RESOURCES = {
+            "metrics/prometheus.yml",
+            "metrics/grafana/provisioning/datasources/prometheus.yml",
+            "metrics/grafana/provisioning/dashboards/dashboards.yml",
+            "metrics/grafana/dashboards/scheduler.json",
+    };
 
     private Path composePath;
     private Path configFile;
@@ -41,11 +54,13 @@ class InfraManager implements AutoCloseable {
 
         extractComposeFile();
         extractConfig();
+        extractMetricsFiles();
         startDockerCompose();
         waitForServices();
         startCoordinator(coordinatorJar);
         waitForCoordinator();
         startWorker(workerJar);
+        logUiUrls();
     }
 
     private void extractComposeFile() throws IOException {
@@ -71,6 +86,19 @@ class InfraManager implements AutoCloseable {
         config = CliConfig.load(configFile);
     }
 
+    private void extractMetricsFiles() throws IOException {
+        for (String resource : METRICS_RESOURCES) {
+            Path dest = SCHEDULER_DIR.resolve(resource);
+            Files.createDirectories(dest.getParent());
+            try (InputStream in = getClass().getResourceAsStream("/" + resource)) {
+                if (in == null) {
+                    throw new IOException(resource + " not found in JAR resources");
+                }
+                Files.copy(in, dest, StandardCopyOption.REPLACE_EXISTING);
+            }
+        }
+    }
+
     private void startDockerCompose() throws Exception {
         log("Starting control plane...");
         ProcessBuilder pb = new ProcessBuilder(
@@ -89,6 +117,17 @@ class InfraManager implements AutoCloseable {
         waitForUrl("Registry", config.getRegistry().getUrl() + "/v2/", 30);
         // MLflow takes longer — installs psycopg2-binary + boto3 on first start
         waitForUrl("MLflow", config.getMlflow().getHealthUrl(), 120);
+        waitForUrl("Prometheus", PROMETHEUS_URL + "/-/ready", 30);
+        waitForUrl("Grafana", GRAFANA_URL + "/api/health", 60);
+    }
+
+    private void logUiUrls() {
+        log("");
+        log("Stack ready. UIs:");
+        log("  Grafana (dashboards):  " + GRAFANA_URL);
+        log("  Prometheus:            " + PROMETHEUS_URL);
+        log("  MinIO console:         http://localhost:9001");
+        log("  MLflow:                http://localhost:5000");
     }
 
     private void waitForUrl(String name, String url, int timeoutSeconds) throws Exception {

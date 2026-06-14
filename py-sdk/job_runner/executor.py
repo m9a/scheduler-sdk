@@ -8,13 +8,15 @@ generated _Harness in the Java SDK.
            ├─ before_job()
            ├─ for each @task (sorted by order):
            │     reporter.task_started(i, name)
-           │     task_method()
+           │     task_method(ctx)        ← per-task TaskContext, the reporting API
            │     reporter.task_completed(i, name)
            └─ after_job()   (finally — always runs)
 """
 
 import inspect
 import traceback
+
+from job_runner.context import TaskContext
 
 
 def run_job(job_class, reporter, params):
@@ -31,11 +33,14 @@ def run_job(job_class, reporter, params):
         for index, task_info in enumerate(tasks):
             name = task_info["name"]
             method = task_info["method"]
+            ctx = TaskContext(reporter, index, name)
             reporter.task_started(index, name)
             try:
-                method(instance)
+                method(instance, ctx)
+                reporter.flush()  # send any telemetry buffered during the task
                 reporter.task_completed(index, name)
             except Exception:
+                reporter.flush()
                 reporter.task_failed(index, name, traceback.format_exc())
                 raise
     finally:

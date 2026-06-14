@@ -6,8 +6,8 @@ import com.scheduler.client.SchedulerException;
 import com.scheduler.proto.v1.InputFile;
 import com.scheduler.proto.v1.Job;
 import com.scheduler.proto.v1.ResourceRequirements;
-import com.scheduler.proto.v1.SubmitJobRequest;
-import com.scheduler.proto.v1.SubmitJobResponse;
+import com.scheduler.proto.client.SubmitJobRequest;
+import com.scheduler.proto.client.SubmitJobResponse;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
 import picocli.CommandLine.ParentCommand;
@@ -110,7 +110,7 @@ class SubmitCommand implements Callable<Integer> {
             Job job = response.getJob();
 
             System.out.println("Job submitted: " + job.getId());
-            System.out.println("Status: " + job.getStatus().name().replace("JOB_STATUS_", ""));
+            System.out.println("Status: " + job.getState().name().replace("JOB_STATE_", ""));
 
             if (wait) {
                 System.out.println("Waiting for completion...");

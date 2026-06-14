@@ -1,7 +1,7 @@
 package com.scheduler.client;
 
 import com.scheduler.proto.v1.Job;
-import com.scheduler.proto.v1.OutputFile;
+import com.scheduler.proto.client.FileInfo;
 
 import java.nio.file.Path;
 import java.time.Duration;
@@ -37,21 +37,21 @@ public class SampleClient {
             Job job = client.submitJob("sample-run", image, Map.of(
                     "epochs", "5",
                     "batch_size", "64"));
-            System.out.println("Job submitted: id=" + job.getId() + ", status=" + job.getStatus());
+            System.out.println("Job submitted: id=" + job.getId() + ", status=" + job.getState());
 
             // 2. Wait for completion
             System.out.println("Waiting for completion...");
             Job completed = client.waitForCompletion(job.getId(), Duration.ofMinutes(10));
-            System.out.println("Job finished: status=" + completed.getStatus());
+            System.out.println("Job finished: status=" + completed.getState());
 
             if (!completed.getErrorMessage().isEmpty()) {
                 System.out.println("Error: " + completed.getErrorMessage());
             }
 
             // 3. List output files
-            List<OutputFile> files = client.listJobFiles(job.getId());
+            List<FileInfo> files = client.listJobFiles(job.getId());
             System.out.println("Output files (" + files.size() + "):");
-            for (OutputFile file : files) {
+            for (FileInfo file : files) {
                 System.out.println("  " + file.getName() + " (" + file.getSizeBytes() + " bytes)");
             }
 

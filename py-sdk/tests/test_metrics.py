@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from scheduler.v1 import common_pb2
-from scheduler.v1 import job_message_pb2
+from scheduler.v1 import job_callback_pb2
 
 
 class TestSetupMlflow:
@@ -35,80 +35,28 @@ class TestSetupMlflow:
             with pytest.raises(RuntimeError, match="MLFLOW_TRACKING_URI not set"):
                 setup_mlflow("my-job", "job-123")
 
-    def test_patches_trainer(self, monkeypatch):
-        """Patches Trainer.__init__ to inject MLFlowLogger."""
+    def test_configures_tracking_and_autolog(self, monkeypatch):
+        """Sets tracking URI + experiment and enables mlflow.autolog() — no patching."""
         monkeypatch.setenv("MLFLOW_TRACKING_URI", "http://mlflow:5000")
 
-        init_calls = []
-
-        class FakeTrainer:
-            def __init__(self, **kwargs):
-                init_calls.append(kwargs)
-
-        mock_mlflow_logger_cls = MagicMock()
-
-        mock_pl = MagicMock()
-        mock_pl.Trainer = FakeTrainer
-        mock_pl_loggers = MagicMock()
-        mock_pl_loggers.MLFlowLogger = mock_mlflow_logger_cls
-
-        with patch.dict(sys.modules, {
-            "mlflow": MagicMock(),
-            "pytorch_lightning": mock_pl,
-            "pytorch_lightning.loggers": mock_pl_loggers,
-        }):
+        mock_mlflow = MagicMock()
+        with patch.dict(sys.modules, {"mlflow": mock_mlflow}):
             from job_runner.metrics import setup_mlflow
             setup_mlflow("mnist-lightning", "job-456")
 
-            # Instantiate without explicit logger — should inject MLFlowLogger
-            FakeTrainer(max_epochs=3)
-
-            mock_mlflow_logger_cls.assert_called_once_with(
-                experiment_name="mnist-lightning",
-                run_name="job-456",
-                tracking_uri="http://mlflow:5000",
-                tags={"scheduler.job_id": "job-456", "scheduler.job_name": "mnist-lightning"},
-            )
-
-    def test_respects_explicit_logger(self, monkeypatch):
-        """Does not override when user passes logger explicitly."""
-        monkeypatch.setenv("MLFLOW_TRACKING_URI", "http://mlflow:5000")
-
-        init_calls = []
-
-        class FakeTrainer:
-            def __init__(self, **kwargs):
-                init_calls.append(kwargs)
-
-        mock_mlflow_logger_cls = MagicMock()
-
-        mock_pl = MagicMock()
-        mock_pl.Trainer = FakeTrainer
-        mock_pl_loggers = MagicMock()
-        mock_pl_loggers.MLFlowLogger = mock_mlflow_logger_cls
-
-        with patch.dict(sys.modules, {
-            "mlflow": MagicMock(),
-            "pytorch_lightning": mock_pl,
-            "pytorch_lightning.loggers": mock_pl_loggers,
-        }):
-            from job_runner.metrics import setup_mlflow
-            setup_mlflow("my-job", "job-789")
-
-            # Instantiate WITH explicit logger — should NOT inject
-            user_logger = MagicMock()
-            FakeTrainer(logger=user_logger)
-
-            mock_mlflow_logger_cls.assert_not_called()
+        mock_mlflow.set_tracking_uri.assert_called_once_with("http://mlflow:5000")
+        mock_mlflow.set_experiment.assert_called_once_with("mnist-lightning")
+        mock_mlflow.autolog.assert_called_once_with()
 
 
 class TestReporterSendsBinaryProto:
 
     @patch("job_runner.reporter.websocket.WebSocket")
     def test_task_started_sends_binary_status(self, MockWebSocket):
-        from job_runner.reporter import Reporter, TYPE_TAG_STATUS
+        from job_runner.reporter import Reporter, TYPE_TAG_STATUS, TYPE_TAG_ACK
 
         mock_ws = MagicMock()
+        mock_ws.recv.return_value = bytes([TYPE_TAG_ACK])  # worker confirms each status frame
         MockWebSocket.return_value = mock_ws
 
         reporter = Reporter("ws://localhost:8080", "job-123")
@@ -119,20 +67,21 @@ class TestReporterSendsBinaryProto:
 
         data = calls[0][0][0]
         assert data[0] == TYPE_TAG_STATUS
-        msg = job_message_pb2.StatusUpdate()
+        msg = job_callback_pb2.StatusUpdate()
         msg.ParseFromString(data[1:])
         assert msg.job_id == "job-123"
         assert msg.task_index == 0
         assert msg.task_name == "extract"
-        assert msg.task_status == common_pb2.TASK_STATUS_RUNNING
+        assert msg.task_state == common_pb2.TASK_STATE_RUNNING
 
         reporter.close()
 
     @patch("job_runner.reporter.websocket.WebSocket")
     def test_task_completed_sends_binary_status(self, MockWebSocket):
-        from job_runner.reporter import Reporter, TYPE_TAG_STATUS
+        from job_runner.reporter import Reporter, TYPE_TAG_STATUS, TYPE_TAG_ACK
 
         mock_ws = MagicMock()
+        mock_ws.recv.return_value = bytes([TYPE_TAG_ACK])  # worker confirms each status frame
         MockWebSocket.return_value = mock_ws
 
         reporter = Reporter("ws://localhost:8080", "job-123")
@@ -144,18 +93,19 @@ class TestReporterSendsBinaryProto:
 
         data = calls[1][0][0]
         assert data[0] == TYPE_TAG_STATUS
-        msg = job_message_pb2.StatusUpdate()
+        msg = job_callback_pb2.StatusUpdate()
         msg.ParseFromString(data[1:])
-        assert msg.task_status == common_pb2.TASK_STATUS_COMPLETED
+        assert msg.task_state == common_pb2.TASK_STATE_COMPLETED
         assert msg.duration_ms >= 0
 
         reporter.close()
 
     @patch("job_runner.reporter.websocket.WebSocket")
     def test_task_failed_includes_error(self, MockWebSocket):
-        from job_runner.reporter import Reporter, TYPE_TAG_STATUS
+        from job_runner.reporter import Reporter, TYPE_TAG_STATUS, TYPE_TAG_ACK
 
         mock_ws = MagicMock()
+        mock_ws.recv.return_value = bytes([TYPE_TAG_ACK])  # worker confirms each status frame
         MockWebSocket.return_value = mock_ws
 
         reporter = Reporter("ws://localhost:8080", "job-123")
@@ -166,9 +116,9 @@ class TestReporterSendsBinaryProto:
         assert len(calls) == 2
 
         data = calls[1][0][0]
-        msg = job_message_pb2.StatusUpdate()
+        msg = job_callback_pb2.StatusUpdate()
         msg.ParseFromString(data[1:])
-        assert msg.task_status == common_pb2.TASK_STATUS_FAILED
+        assert msg.task_state == common_pb2.TASK_STATE_FAILED
         assert msg.error_message == "out of memory"
 
         reporter.close()

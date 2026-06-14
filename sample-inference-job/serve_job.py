@@ -17,7 +17,7 @@ class SineWaveInferenceJob:
         self.port = int(port)
 
     @task("serve", order=1)
-    def serve(self):
+    def serve(self, ctx):
         subprocess.run([
             "python3", "/opt/job/inference_server.py",
             "--model", "/workspace/input/model.pt",
