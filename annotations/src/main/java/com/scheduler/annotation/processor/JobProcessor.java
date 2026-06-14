@@ -55,7 +55,8 @@ public class JobProcessor extends AbstractProcessor {
     private static final ClassName TASK_DESCRIPTOR = ClassName.get("com.scheduler.sdk.meta", "TaskDescriptor");
     private static final ClassName EXECUTION_PAYLOAD = ClassName.get("com.scheduler.sdk", "ExecutionPayload");
     private static final ClassName JOB_REPORTER = ClassName.get("com.scheduler.sdk", "JobReporter");
-    private static final ClassName DEFAULT_JOB_CONTEXT = ClassName.get("com.scheduler.sdk", "DefaultJobContext");
+    private static final ClassName TASK_CONTEXT = ClassName.get("com.scheduler.sdk", "TaskContext");
+    private static final ClassName OUTPUT_CAPTURE = ClassName.get("com.scheduler.sdk", "OutputCapture");
 
     private final List<String> descriptorFqns = new ArrayList<>();
 
@@ -301,7 +302,6 @@ public class JobProcessor extends AbstractProcessor {
         CodeBlock.Builder body = CodeBlock.builder();
         body.addStatement("$T payload = $T.decode(args)", EXECUTION_PAYLOAD, EXECUTION_PAYLOAD);
         body.addStatement("$T reporter = $T.connect(payload.workerAgentUrl(), payload.jobId())", JOB_REPORTER, JOB_REPORTER);
-        body.addStatement("$T ctx = new $T(reporter)", DEFAULT_JOB_CONTEXT, DEFAULT_JOB_CONTEXT);
         body.add("\n");
         body.addStatement("$T job = new $T($L)", jobClassName, jobClassName, constructorArgs(constructorParams));
         body.add("\n");
@@ -321,6 +321,7 @@ public class JobProcessor extends AbstractProcessor {
         if (afterMethod != null) {
             body.addStatement("job.$L()", afterMethod.getSimpleName());
         }
+        body.addStatement("reporter.close()");
 
         body.nextControlFlow("catch ($T e)", Exception.class);
         if (afterMethod != null) {
@@ -331,6 +332,7 @@ public class JobProcessor extends AbstractProcessor {
             body.endControlFlow();
         }
         body.addStatement("e.printStackTrace()");
+        body.addStatement("reporter.close()");
         body.addStatement("$T.exit(1)", System.class);
         body.endControlFlow();
 
@@ -441,32 +443,39 @@ public class JobProcessor extends AbstractProcessor {
         return b.build();
     }
 
-    /** Produces the try/catch block for a single task: report started, invoke, report completed/failed. */
+    /**
+     * Produces the block for a single task: create its TaskContext, capture stdout,
+     * report started, invoke, report completed/failed with the captured output.
+     * Variables are suffixed with the task index — all blocks share main()'s scope.
+     */
     private CodeBlock taskBlock(int index, ExecutableElement method) {
         Task taskAnn = method.getAnnotation(Task.class);
         String taskName = taskAnn.name();
 
         CodeBlock.Builder b = CodeBlock.builder();
+        b.addStatement("$T ctx$L = reporter.taskContext($L, $S)", TASK_CONTEXT, index, index, taskName);
+        b.addStatement("$T capture$L = new $T()", OUTPUT_CAPTURE, index, OUTPUT_CAPTURE);
+        b.addStatement("capture$L.start()", index);
         b.addStatement("reporter.taskStarted($L, $S)", index, taskName);
         b.beginControlFlow("try");
-        b.addStatement("job.$L($L)", method.getSimpleName(), taskMethodArgs(method));
-        b.addStatement("reporter.taskCompleted($L, $S)", index, taskName);
+        b.addStatement("job.$L($L)", method.getSimpleName(), taskMethodArgs(method, index));
+        b.addStatement("reporter.taskCompleted($L, $S, capture$L.stop())", index, taskName, index);
         b.nextControlFlow("catch ($T e)", Exception.class);
-        b.addStatement("reporter.taskFailed($L, $S, e.getMessage())", index, taskName);
+        b.addStatement("reporter.taskFailed($L, $S, e.getMessage(), capture$L.stop())", index, taskName, index);
         b.addStatement("throw e");
         b.endControlFlow();
         return b.build();
     }
 
-    /** Produces argument list for a @Task method: {@code ctx} for @Context, {@code payload.param(...)} for @Param. */
-    private CodeBlock taskMethodArgs(ExecutableElement method) {
+    /** Produces argument list for a @Task method: {@code ctx<index>} for @Context, {@code payload.param(...)} for @Param. */
+    private CodeBlock taskMethodArgs(ExecutableElement method, int index) {
         CodeBlock.Builder b = CodeBlock.builder();
         List<? extends VariableElement> params = method.getParameters();
         for (int i = 0; i < params.size(); i++) {
             VariableElement param = params.get(i);
             if (i > 0) b.add(", ");
             if (param.getAnnotation(Context.class) != null) {
-                b.add("ctx");
+                b.add("ctx$L", index);
             } else {
                 Param paramAnn = param.getAnnotation(Param.class);
                 if (paramAnn != null) {

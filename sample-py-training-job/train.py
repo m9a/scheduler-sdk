@@ -92,17 +92,18 @@ class MnistTrainingJob:
         self.trainer = None
 
     @task("train", order=1)
-    def train(self):
+    def train(self, ctx):
         self.model = MnistModel()
         self.datamodule = MnistDataModule(batch_size=self.batch_size)
+        # Metric history goes to MLflow via autolog (set up by the runner).
         self.trainer = Trainer(max_epochs=self.epochs, accelerator="auto")
         self.trainer.fit(self.model, self.datamodule)
 
     @task("test", order=2)
-    def test(self):
+    def test(self, ctx):
         self.trainer.test(self.model, self.datamodule)
 
     @task("export", order=3)
-    def export(self):
+    def export(self, ctx):
         torch.save(self.model.state_dict(), "/workspace/output/model.pt")
         print("Model saved to /workspace/output/model.pt")

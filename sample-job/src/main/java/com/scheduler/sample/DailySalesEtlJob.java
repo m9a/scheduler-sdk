@@ -6,7 +6,7 @@ import com.scheduler.annotation.Context;
 import com.scheduler.annotation.Job;
 import com.scheduler.annotation.Param;
 import com.scheduler.annotation.Task;
-import com.scheduler.sdk.JobContext;
+import com.scheduler.sdk.TaskContext;
 
 /**
  * Sample annotated job demonstrating the annotation-based API.
@@ -21,6 +21,9 @@ public class DailySalesEtlJob {
     private final String region;
     private final int batchSize;
 
+    // Inter-task data lives on the job instance — tasks are methods on the same object.
+    private int rowCount;
+
     public DailySalesEtlJob(@Param("region") String region,
                             @Param(value = "batchSize", defaultValue = "1000") int batchSize) {
         this.region = region;
@@ -33,21 +36,27 @@ public class DailySalesEtlJob {
     }
 
     @Task(name = "extract", order = 1, critical = true)
-    public void extract(@Context JobContext ctx) {
+    public void extract(@Context TaskContext ctx) {
         System.out.println("Extracting sales data for region=" + region);
-        ctx.put("rowCount", 5000);
+        rowCount = 5000;
+        ctx.metric("rows_extracted", rowCount);
     }
 
     @Task(name = "transform", order = 2, dependsOn = "extract")
-    public void transform(@Context JobContext ctx) {
-        Integer rowCount = ctx.get("rowCount", Integer.class);
+    public void transform(@Context TaskContext ctx) {
         System.out.println("Transforming " + rowCount + " rows in batches of " + batchSize);
+        long start = System.currentTimeMillis();
+        int batches = (rowCount + batchSize - 1) / batchSize;
+        for (int i = 0; i < batches; i++) {
+            ctx.progress(i + 1, batches);
+        }
+        ctx.metric("transform_duration_ms", System.currentTimeMillis() - start);
     }
 
     @Task(name = "load", order = 3, dependsOn = "transform")
-    public void load(@Context JobContext ctx) {
-        Integer rowCount = ctx.get("rowCount", Integer.class);
+    public void load(@Context TaskContext ctx) {
         System.out.println("Loading " + rowCount + " rows into warehouse");
+        ctx.event("load_complete", rowCount + " rows");
     }
 
     @AfterJob

@@ -72,6 +72,34 @@ services:
     networks:
       - scheduler-net
 
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    ports:
+      - "9095:9090"
+    volumes:
+      - ./metrics/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    # Coordinator/worker run on the host (the CLI launches them as Java processes) —
+    # containers reach them via host.docker.internal (see metrics/prometheus.yml).
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - scheduler-net
+
+  grafana:
+    image: grafana/grafana:11.1.0
+    depends_on:
+      - prometheus
+    ports:
+      - "3000:3000"
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+    volumes:
+      - ./metrics/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./metrics/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    networks:
+      - scheduler-net
+
 networks:
   scheduler-net:
     name: scheduler-net

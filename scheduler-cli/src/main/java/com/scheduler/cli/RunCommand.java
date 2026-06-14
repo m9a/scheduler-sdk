@@ -3,7 +3,7 @@ package com.scheduler.cli;
 import com.scheduler.client.SchedulerClient;
 import com.scheduler.client.SchedulerException;
 import com.scheduler.proto.v1.Job;
-import com.scheduler.proto.v1.JobStatus;
+import com.scheduler.proto.v1.JobState;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.ParentCommand;
 
@@ -62,11 +62,7 @@ class RunCommand implements Callable<Integer> {
         try {
             infra.start(coordinatorJar, workerJar);
 
-            System.out.println();
-            System.out.println("Infrastructure:");
-            System.out.println("  MLflow:    http://localhost:5000");
-            System.out.println("  MinIO:     http://localhost:9000  (console: http://localhost:9001)");
-            System.out.println("  Registry:  http://localhost:5050");
+            // The UI summary is printed by InfraManager.logUiUrls() once everything is ready.
             System.out.println();
             System.out.println("Logs: " + infra.getLogFile());
             System.out.println("  tail -f " + infra.getLogFile());
@@ -178,12 +174,12 @@ class RunCommand implements Callable<Integer> {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(timeoutSeconds);
         while (System.nanoTime() < deadline) {
             Job job = client.getJobStatus(jobId);
-            JobStatus status = job.getStatus();
-            if (status == JobStatus.JOB_STATUS_RUNNING) {
+            JobState state = job.getState();
+            if (state == JobState.JOB_STATE_RUNNING) {
                 return job;
             }
-            if (status == JobStatus.JOB_STATUS_COMPLETED || status == JobStatus.JOB_STATUS_FAILED
-                    || status == JobStatus.JOB_STATUS_KILLED) {
+            if (state == JobState.JOB_STATE_COMPLETED || state == JobState.JOB_STATE_FAILED
+                    || state == JobState.JOB_STATE_KILLED) {
                 return job;
             }
             try { Thread.sleep(500); } catch (InterruptedException e) {

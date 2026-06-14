@@ -2,7 +2,7 @@ package com.scheduler.cli;
 
 import com.scheduler.client.SchedulerClient;
 import com.scheduler.client.SchedulerException;
-import com.scheduler.proto.v1.OutputFile;
+import com.scheduler.proto.client.FileInfo;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Parameters;
 import picocli.CommandLine.ParentCommand;
@@ -22,7 +22,7 @@ class FilesCommand implements Callable<Integer> {
     @Override
     public Integer call() {
         try (SchedulerClient client = parent.connect()) {
-            List<OutputFile> files = client.listJobFiles(jobId);
+            List<FileInfo> files = client.listJobFiles(jobId);
             System.out.println(Formatter.formatFiles(jobId, files));
             return 0;
         } catch (SchedulerException e) {

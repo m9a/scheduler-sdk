@@ -1,6 +1,7 @@
 package com.scheduler.client;
 
 import com.scheduler.proto.v1.*;
+import com.scheduler.proto.client.*;
 import com.scheduler.proto.v1.ResourceRequirements;
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
@@ -107,7 +108,7 @@ public class SchedulerClient implements AutoCloseable {
         return response.getJob();
     }
 
-    public List<OutputFile> listJobFiles(String jobId) {
+    public List<FileInfo> listJobFiles(String jobId) {
         ListJobFilesResponse response = callWithRetry(stub ->
                 stub.listJobFiles(ListJobFilesRequest.newBuilder()
                         .setJobId(jobId)
@@ -129,7 +130,7 @@ public class SchedulerClient implements AutoCloseable {
     /**
      * Downloads a file from the job's output, streaming chunks to the given
      * {@link OutputStream}. The first message from the server is a
-     * {@link FileHeader}; subsequent messages are 64KB byte chunks.
+     * {@link FileInfo}; subsequent messages are 64KB byte chunks.
      */
     public void downloadFile(String jobId, String path, OutputStream out) {
         try {
@@ -145,7 +146,7 @@ public class SchedulerClient implements AutoCloseable {
                 if (response.hasChunk()) {
                     out.write(response.getChunk().toByteArray());
                 }
-                // FileHeader is logged but not written — caller can use listJobFiles for metadata
+                // FileInfo is logged but not written — caller can use listJobFiles for metadata
                 if (response.hasHeader()) {
                     log.debug("Downloading {} ({} bytes)", response.getHeader().getName(),
                             response.getHeader().getSizeBytes());
@@ -169,12 +170,12 @@ public class SchedulerClient implements AutoCloseable {
 
         while (System.nanoTime() < deadlineNanos) {
             Job job = getJobStatus(jobId);
-            JobStatus status = job.getStatus();
+            JobState state = job.getState();
 
-            if (status == JobStatus.JOB_STATUS_COMPLETED
-                    || status == JobStatus.JOB_STATUS_FAILED
-                    || status == JobStatus.JOB_STATUS_CANCELLED
-                    || status == JobStatus.JOB_STATUS_KILLED) {
+            if (state == JobState.JOB_STATE_COMPLETED
+                    || state == JobState.JOB_STATE_FAILED
+                    || state == JobState.JOB_STATE_CANCELLED
+                    || state == JobState.JOB_STATE_KILLED) {
                 return job;
             }
 
