@@ -1,5 +1,6 @@
 package com.scheduler.sdk;
 
+import com.scheduler.proto.job.Liveness;
 import com.scheduler.proto.job.StatusUpdate;
 import com.scheduler.proto.v1.TaskState;
 import org.slf4j.Logger;
@@ -11,6 +12,8 @@ import java.net.http.WebSocket;
 import java.nio.ByteBuffer;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -42,18 +45,24 @@ public final class JobReporter {
     private static final Logger log = LoggerFactory.getLogger(JobReporter.class);
     private static final long ACK_TIMEOUT_MS = 10_000;
     private static final int MAX_SEND_ATTEMPTS = 3;
-    // WebSocket frame type tag for task status updates; must match JobCallbackServer.
+    // WebSocket frame type tags; must match JobCallbackServer.
     private static final byte TYPE_TAG_STATUS = 0x01;
+    private static final byte TYPE_TAG_LIVENESS = 0x04;
+    // How often to ping while a task runs (must be < the worker's stall probe interval).
+    private static final long LIVENESS_INTERVAL_MS = 15_000;
 
     private final String callbackUrl;
     private final String jobId;
     private final ReportSender reports;
     private final Object sendLock = new Object();
+    private final ScheduledExecutorService liveness;
 
     private volatile WebSocket webSocket;
     // Completed by the listener when the worker's ack frame arrives; non-null
     // only while a status frame is in flight (guarded by sendLock).
     private volatile CompletableFuture<Void> pendingAck;
+    // Last time any frame was sent — drives the idle liveness ping.
+    private volatile long lastSentAtMs;
     private long taskStartTimeMs;
 
     private JobReporter(String callbackUrl, String jobId) {
@@ -61,6 +70,14 @@ public final class JobReporter {
         this.jobId = jobId;
         this.reports = new ReportSender(framed -> send(framed, false), jobId);
         this.webSocket = openSocket();
+        this.lastSentAtMs = System.currentTimeMillis();
+        this.liveness = Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "liveness-ping");
+            t.setDaemon(true);
+            return t;
+        });
+        liveness.scheduleAtFixedRate(this::sendLivenessIfIdle,
+                LIVENESS_INTERVAL_MS, LIVENESS_INTERVAL_MS, TimeUnit.MILLISECONDS);
     }
 
     /** Opens the single WebSocket connection to the given callback URL. */
@@ -119,6 +136,25 @@ public final class JobReporter {
         sendStatus(taskIndex, taskName, TaskState.TASK_STATE_FAILED, durationMs, error, output);
     }
 
+    /** Pings the worker (container-alive signal) if nothing has been sent for an interval. */
+    private void sendLivenessIfIdle() {
+        if (System.currentTimeMillis() - lastSentAtMs < LIVENESS_INTERVAL_MS) {
+            return;
+        }
+        try {
+            byte[] proto = Liveness.newBuilder()
+                    .setJobId(jobId)
+                    .setTimestampMs(System.currentTimeMillis())
+                    .build().toByteArray();
+            byte[] framed = new byte[proto.length + 1];
+            framed[0] = TYPE_TAG_LIVENESS;
+            System.arraycopy(proto, 0, framed, 1, proto.length);
+            send(framed, false);
+        } catch (Exception e) {
+            log.debug("Liveness ping failed: {}", e.getMessage());
+        }
+    }
+
     /** Builds the task-status proto, frames it ({@code [0x01][proto]}), and sends it acked. */
     private void sendStatus(int taskIndex, String taskName, TaskState state,
                             long durationMs, String error, String output) {
@@ -142,6 +178,7 @@ public final class JobReporter {
     }
 
     public void close() {
+        liveness.shutdownNow();
         reports.flush();
         try {
             webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "done").join();
@@ -157,6 +194,7 @@ public final class JobReporter {
      */
     private void send(byte[] framed, boolean awaitAck) {
         synchronized (sendLock) {
+            lastSentAtMs = System.currentTimeMillis();  // any send counts as activity
             Exception lastError = null;
             for (int attempt = 0; attempt < MAX_SEND_ATTEMPTS; attempt++) {
                 try {

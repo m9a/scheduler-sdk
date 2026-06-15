@@ -15,7 +15,7 @@ _sym_db = _symbol_database.Default()
 from scheduler.v1 import common_pb2 as scheduler_dot_v1_dot_common__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x1fscheduler/v1/job_callback.proto\x12\x10scheduler.job.v1\x1a\x19scheduler/v1/common.proto\"\xa6\x02\n\x0cStatusUpdate\x12\x0e\n\x06job_id\x18\x01 \x01(\t\x12\x12\n\ntask_index\x18\x02 \x01(\x05\x12\x11\n\ttask_name\x18\x03 \x01(\t\x12+\n\ntask_state\x18\x04 \x01(\x0e\x32\x17.scheduler.v1.TaskState\x12\x15\n\rerror_message\x18\x05 \x01(\t\x12\x13\n\x0b\x64uration_ms\x18\x06 \x01(\x03\x12\x0e\n\x06output\x18\x07 \x01(\t\x12)\n\tjob_state\x18\x08 \x01(\x0e\x32\x16.scheduler.v1.JobState\x12\x33\n\x0e\x66\x61ilure_reason\x18\t \x01(\x0e\x32\x1b.scheduler.v1.FailureReason\x12\x16\n\x0e\x66\x61ilure_detail\x18\n \x01(\t\"n\n\x06Report\x12\x0e\n\x06job_id\x18\x01 \x01(\t\x12\x12\n\ntask_index\x18\x02 \x01(\x05\x12\x14\n\x0ctimestamp_ms\x18\x03 \x01(\x03\x12*\n\x07\x65ntries\x18\x04 \x03(\x0b\x32\x19.scheduler.v1.ReportEntryB\x1b\n\x17\x63om.scheduler.proto.jobP\x01\x62\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x1fscheduler/v1/job_callback.proto\x12\x10scheduler.job.v1\x1a\x19scheduler/v1/common.proto\"\xa6\x02\n\x0cStatusUpdate\x12\x0e\n\x06job_id\x18\x01 \x01(\t\x12\x12\n\ntask_index\x18\x02 \x01(\x05\x12\x11\n\ttask_name\x18\x03 \x01(\t\x12+\n\ntask_state\x18\x04 \x01(\x0e\x32\x17.scheduler.v1.TaskState\x12\x15\n\rerror_message\x18\x05 \x01(\t\x12\x13\n\x0b\x64uration_ms\x18\x06 \x01(\x03\x12\x0e\n\x06output\x18\x07 \x01(\t\x12)\n\tjob_state\x18\x08 \x01(\x0e\x32\x16.scheduler.v1.JobState\x12\x33\n\x0e\x66\x61ilure_reason\x18\t \x01(\x0e\x32\x1b.scheduler.v1.FailureReason\x12\x16\n\x0e\x66\x61ilure_detail\x18\n \x01(\t\"n\n\x06Report\x12\x0e\n\x06job_id\x18\x01 \x01(\t\x12\x12\n\ntask_index\x18\x02 \x01(\x05\x12\x14\n\x0ctimestamp_ms\x18\x03 \x01(\x03\x12*\n\x07\x65ntries\x18\x04 \x03(\x0b\x32\x19.scheduler.v1.ReportEntry\"0\n\x08Liveness\x12\x0e\n\x06job_id\x18\x01 \x01(\t\x12\x14\n\x0ctimestamp_ms\x18\x02 \x01(\x03\x42\x1b\n\x17\x63om.scheduler.proto.jobP\x01\x62\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -27,4 +27,6 @@ if _descriptor._USE_C_DESCRIPTORS == False:
   _globals['_STATUSUPDATE']._serialized_end=375
   _globals['_REPORT']._serialized_start=377
   _globals['_REPORT']._serialized_end=487
+  _globals['_LIVENESS']._serialized_start=489
+  _globals['_LIVENESS']._serialized_end=537
 # @@protoc_insertion_point(module_scope)

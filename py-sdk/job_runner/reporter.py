@@ -9,6 +9,7 @@ connection. Mirrors the Java SDK.
            │                          ◄── ws: [0x02 ack] ──────────  (parent JVM)
            ├─ module.run(params)
            │    └─ progress()/metric()/...  ── ws: [0x03][Report] ──► WorkerAgent
+           │    (idle)             ── ws: [0x04][Liveness] ──────► WorkerAgent
            └─ task_completed()    ── ws: [0x01][StatusUpdate]  ──► WorkerAgent
                                       ◄── ws: [0x02 ack] ──────────
 
@@ -34,11 +35,15 @@ TYPE_TAG_STATUS = 0x01
 TYPE_TAG_ACK = 0x02
 # Must match WorkerAgent.TYPE_TAG_REPORT and Java SDK's TaskContext report tag
 TYPE_TAG_REPORT = 0x03
+# Liveness ping (SDK -> worker only; consumed locally for stall detection).
+TYPE_TAG_LIVENESS = 0x04
 # Minimum seconds between report frames (throttle).
 REPORT_INTERVAL_S = 1.0
 # How long to wait for the worker's ack before resending a status frame.
 ACK_TIMEOUT_S = 10.0
 MAX_SEND_ATTEMPTS = 3
+# How often to ping while a task runs (must be < the worker's stall probe interval).
+LIVENESS_INTERVAL_S = 15.0
 
 
 class Reporter:
@@ -53,7 +58,13 @@ class Reporter:
         self._last_flush = time.monotonic()
         self._report_lock = threading.Lock()   # guards the report buffer
         self._send_lock = threading.Lock()     # serializes wire access (one send at a time)
+        # Drives the idle liveness ping: time of the last frame sent.
+        self._last_send = time.monotonic()
+        self._stop = threading.Event()
         self._connect()
+        self._liveness_thread = threading.Thread(
+            target=self._liveness_loop, name="liveness-ping", daemon=True)
+        self._liveness_thread.start()
 
     def _connect(self) -> None:
         try:
@@ -64,6 +75,7 @@ class Reporter:
             self._ws = None
 
     def close(self) -> None:
+        self._stop.set()
         self.flush()
         if self._ws is not None:
             try:
@@ -83,6 +95,17 @@ class Reporter:
     def task_failed(self, index: int, name: str, error: str) -> None:
         duration_ms = _now_ms() - self._start_times.pop(index, _now_ms())
         self._send_status(index, name, common_pb2.TASK_STATE_FAILED, duration_ms, error)
+
+    def _liveness_loop(self) -> None:
+        """Pings the worker (container-alive signal) when nothing was sent for an interval."""
+        while not self._stop.wait(LIVENESS_INTERVAL_S):
+            if (time.monotonic() - self._last_send) < LIVENESS_INTERVAL_S:
+                continue
+            try:
+                msg = job_callback_pb2.Liveness(job_id=self._job_id, timestamp_ms=_now_ms())
+                self._send_binary(bytes([TYPE_TAG_LIVENESS]) + msg.SerializeToString())
+            except Exception as e:
+                print(f"[job_runner] liveness ping failed: {e}")
 
     def report(self, task_index: int, key: str, kind: int, value, *, force: bool = False) -> None:
         """Buffers one key-value entry; sends a batched Report frame when due."""
@@ -148,6 +171,7 @@ class Reporter:
         """
         last_error = None
         with self._send_lock:
+            self._last_send = time.monotonic()  # any send counts as activity
             for _ in range(MAX_SEND_ATTEMPTS):
                 try:
                     if self._ws is None:
@@ -164,8 +188,9 @@ class Reporter:
         print(f"[job_runner] status send failed after {MAX_SEND_ATTEMPTS} attempts: {last_error}")
 
     def _send_binary(self, data: bytes) -> None:
-        """Sends a telemetry frame (fire-and-forget — telemetry is lossy)."""
+        """Sends a telemetry/liveness frame (fire-and-forget — lossy by design)."""
         with self._send_lock:
+            self._last_send = time.monotonic()  # any send counts as activity
             try:
                 if self._ws is None:
                     self._connect()
