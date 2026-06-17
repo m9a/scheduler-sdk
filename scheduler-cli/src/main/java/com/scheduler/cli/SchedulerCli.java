@@ -3,7 +3,6 @@ package com.scheduler.cli;
 import com.scheduler.client.SchedulerClient;
 import picocli.CommandLine;
 import picocli.CommandLine.Command;
-import picocli.CommandLine.Option;
 
 import java.io.IOException;
 import java.nio.file.Path;
@@ -23,29 +22,20 @@ import java.time.Duration;
         })
 public class SchedulerCli implements Runnable {
 
-    @Option(names = "--config",
-            description = "Path to YAML config file (default: ~/.scheduler/config.yaml)")
-    Path configPath;
-
-    @Option(names = "--host", description = "Coordinator hostname (overrides config file)")
-    String host;
-
-    @Option(names = "--port", description = "Coordinator port (overrides config file)")
-    Integer port;
-
     private CliConfig config;
 
+    // Config path comes only from CONTROL_PLANE_CONFIG — no default path, no flag.
     CliConfig config() {
         if (config == null) {
-            if (configPath != null) {
-                try {
-                    config = CliConfig.load(configPath);
-                } catch (IOException e) {
-                    System.err.println("Failed to load config from " + configPath + ": " + e.getMessage());
-                    config = new CliConfig();
-                }
-            } else {
-                config = CliConfig.loadDefault();
+            String path = System.getenv("CONTROL_PLANE_CONFIG");
+            if (path == null || path.isBlank()) {
+                throw new IllegalStateException("CONTROL_PLANE_CONFIG must point to control-plane.yaml");
+            }
+            try {
+                config = CliConfig.load(Path.of(path));
+            } catch (IOException e) {
+                throw new IllegalStateException(
+                        "Failed to load CONTROL_PLANE_CONFIG=" + path + ": " + e.getMessage(), e);
             }
         }
         return config;
@@ -53,12 +43,9 @@ public class SchedulerCli implements Runnable {
 
     SchedulerClient connect() {
         CliConfig cfg = config();
-        String resolvedHost = host != null ? host : cfg.getCoordinator().getHost();
-        int resolvedPort = port != null ? port : cfg.getCoordinator().getPort();
-
         return SchedulerClient.builder()
-                .host(resolvedHost)
-                .port(resolvedPort)
+                .host(cfg.getCoordinator().getHost())
+                .port(cfg.getCoordinator().getPort())
                 .deadline(Duration.ofSeconds(30))
                 .build();
     }

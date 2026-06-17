@@ -92,6 +92,7 @@ public class JobProcessor extends AbstractProcessor {
         List<ExecutableElement> taskMethods = getTaskMethods(jobClass);
         List<ExecutableElement> beforeMethods = getAnnotatedMethods(jobClass, BeforeJob.class);
         List<ExecutableElement> afterMethods = getAnnotatedMethods(jobClass, AfterJob.class);
+        List<ExecutableElement> shutdownMethods = getAnnotatedMethods(jobClass, OnShutdown.class);
 
         // Multiple @BeforeJob
         if (beforeMethods.size() > 1) {
@@ -107,6 +108,20 @@ public class JobProcessor extends AbstractProcessor {
                 error(m, "Only one @AfterJob method is allowed per @Job class");
             }
             valid = false;
+        }
+
+        // @OnShutdown: at most one, takes no params or a single TaskContext
+        if (shutdownMethods.size() > 1) {
+            for (ExecutableElement m : shutdownMethods) {
+                error(m, "Only one @OnShutdown method is allowed per @Job class");
+            }
+            valid = false;
+        }
+        for (ExecutableElement m : shutdownMethods) {
+            if (m.getParameters().size() > 1) {
+                error(m, "@OnShutdown method takes no parameters or a single TaskContext");
+                valid = false;
+            }
         }
 
         // @Task method returns non-void
@@ -296,8 +311,10 @@ public class JobProcessor extends AbstractProcessor {
         List<ParamInfo> constructorParams = getConstructorParams(jobClass);
         ExecutableElement beforeMethod = getAnnotatedMethods(jobClass, BeforeJob.class).stream().findFirst().orElse(null);
         ExecutableElement afterMethod = getAnnotatedMethods(jobClass, AfterJob.class).stream().findFirst().orElse(null);
+        ExecutableElement shutdownMethod = getAnnotatedMethods(jobClass, OnShutdown.class).stream().findFirst().orElse(null);
 
         ClassName jobClassName = ClassName.get(packageName, className);
+        ClassName atomicBoolean = ClassName.get("java.util.concurrent.atomic", "AtomicBoolean");
 
         CodeBlock.Builder body = CodeBlock.builder();
         body.addStatement("$T payload = $T.decode(args)", EXECUTION_PAYLOAD, EXECUTION_PAYLOAD);
@@ -305,6 +322,30 @@ public class JobProcessor extends AbstractProcessor {
         body.add("\n");
         body.addStatement("$T job = new $T($L)", jobClassName, jobClassName, constructorArgs(constructorParams));
         body.add("\n");
+
+        // @OnShutdown: run the hook (best-effort) on SIGTERM (the worker's graceful
+        // stop), unless the job already finished on its own.
+        if (shutdownMethod != null) {
+            String invoke = shutdownMethod.getParameters().isEmpty()
+                    ? "job." + shutdownMethod.getSimpleName() + "()"
+                    : "job." + shutdownMethod.getSimpleName()
+                            + "(reporter.taskContext(reporter.lastTaskIndex(), reporter.lastTaskName()))";
+            body.addStatement("$T finished = new $T(false)", atomicBoolean, atomicBoolean);
+            body.add("$T.getRuntime().addShutdownHook(new $T(() -> {\n", Runtime.class, Thread.class);
+            body.indent();
+            body.beginControlFlow("if (finished.getAndSet(true))");
+            body.addStatement("return");
+            body.endControlFlow();
+            body.beginControlFlow("try");
+            body.addStatement("$L", invoke);
+            body.nextControlFlow("catch ($T t)", Throwable.class);
+            body.addStatement("t.printStackTrace()");
+            body.endControlFlow();
+            body.addStatement("reporter.close()");
+            body.unindent();
+            body.addStatement("}))");
+            body.add("\n");
+        }
 
         body.beginControlFlow("try");
 
@@ -321,9 +362,15 @@ public class JobProcessor extends AbstractProcessor {
         if (afterMethod != null) {
             body.addStatement("job.$L()", afterMethod.getSimpleName());
         }
+        if (shutdownMethod != null) {
+            body.addStatement("finished.set(true)");  // job done — disarm the shutdown hook
+        }
         body.addStatement("reporter.close()");
 
         body.nextControlFlow("catch ($T e)", Exception.class);
+        if (shutdownMethod != null) {
+            body.addStatement("finished.set(true)");
+        }
         if (afterMethod != null) {
             body.beginControlFlow("try");
             body.addStatement("job.$L()", afterMethod.getSimpleName());

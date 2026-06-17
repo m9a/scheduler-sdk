@@ -4,6 +4,7 @@ import com.scheduler.annotation.AfterJob;
 import com.scheduler.annotation.BeforeJob;
 import com.scheduler.annotation.Context;
 import com.scheduler.annotation.Job;
+import com.scheduler.annotation.OnShutdown;
 import com.scheduler.annotation.Param;
 import com.scheduler.annotation.Task;
 import com.scheduler.sdk.TaskContext;
@@ -62,5 +63,12 @@ public class DailySalesEtlJob {
     @AfterJob
     public void cleanup() {
         System.out.println("Cleaning up temporary files");
+    }
+
+    // Runs only if the worker terminates the container mid-run (SIGTERM).
+    @OnShutdown
+    public void onShutdown(@Context TaskContext ctx) {
+        System.out.println("Shutting down — flushing partial progress for " + rowCount + " rows");
+        ctx.event("shutdown", "terminated after " + rowCount + " rows");
     }
 }

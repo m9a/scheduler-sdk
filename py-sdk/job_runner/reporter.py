@@ -62,6 +62,7 @@ class Reporter:
         self._last_send = time.monotonic()
         self._stop = threading.Event()
         self._connect()
+        self._send_liveness()  # initial ping so the worker sees proof-of-life promptly
         self._liveness_thread = threading.Thread(
             target=self._liveness_loop, name="liveness-ping", daemon=True)
         self._liveness_thread.start()
@@ -96,16 +97,18 @@ class Reporter:
         duration_ms = _now_ms() - self._start_times.pop(index, _now_ms())
         self._send_status(index, name, common_pb2.TASK_STATE_FAILED, duration_ms, error)
 
+    def _send_liveness(self) -> None:
+        try:
+            msg = job_callback_pb2.Liveness(job_id=self._job_id, timestamp_ms=_now_ms())
+            self._send_binary(bytes([TYPE_TAG_LIVENESS]) + msg.SerializeToString())
+        except Exception as e:
+            print(f"[job_runner] liveness ping failed: {e}")
+
     def _liveness_loop(self) -> None:
         """Pings the worker (container-alive signal) when nothing was sent for an interval."""
         while not self._stop.wait(LIVENESS_INTERVAL_S):
-            if (time.monotonic() - self._last_send) < LIVENESS_INTERVAL_S:
-                continue
-            try:
-                msg = job_callback_pb2.Liveness(job_id=self._job_id, timestamp_ms=_now_ms())
-                self._send_binary(bytes([TYPE_TAG_LIVENESS]) + msg.SerializeToString())
-            except Exception as e:
-                print(f"[job_runner] liveness ping failed: {e}")
+            if (time.monotonic() - self._last_send) >= LIVENESS_INTERVAL_S:
+                self._send_liveness()
 
     def report(self, task_index: int, key: str, kind: int, value, *, force: bool = False) -> None:
         """Buffers one key-value entry; sends a batched Report frame when due."""

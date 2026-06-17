@@ -63,6 +63,9 @@ public final class JobReporter {
     private volatile CompletableFuture<Void> pendingAck;
     // Last time any frame was sent — drives the idle liveness ping.
     private volatile long lastSentAtMs;
+    // The most recently started task — the shutdown hook reports against it.
+    private volatile int lastTaskIndex = 0;
+    private volatile String lastTaskName = "";
     private long taskStartTimeMs;
 
     private JobReporter(String callbackUrl, String jobId) {
@@ -78,6 +81,7 @@ public final class JobReporter {
         });
         liveness.scheduleAtFixedRate(this::sendLivenessIfIdle,
                 LIVENESS_INTERVAL_MS, LIVENESS_INTERVAL_MS, TimeUnit.MILLISECONDS);
+        sendLiveness();  // initial ping so the worker sees proof-of-life promptly
     }
 
     /** Opens the single WebSocket connection to the given callback URL. */
@@ -121,7 +125,18 @@ public final class JobReporter {
 
     public void taskStarted(int taskIndex, String taskName) {
         taskStartTimeMs = System.currentTimeMillis();
+        lastTaskIndex = taskIndex;
+        lastTaskName = taskName;
         sendStatus(taskIndex, taskName, TaskState.TASK_STATE_RUNNING, 0, null, null);
+    }
+
+    /** Index/name of the most recently started task — used by the generated shutdown hook. */
+    public int lastTaskIndex() {
+        return lastTaskIndex;
+    }
+
+    public String lastTaskName() {
+        return lastTaskName;
     }
 
     public void taskCompleted(int taskIndex, String taskName, String output) {
@@ -138,9 +153,12 @@ public final class JobReporter {
 
     /** Pings the worker (container-alive signal) if nothing has been sent for an interval. */
     private void sendLivenessIfIdle() {
-        if (System.currentTimeMillis() - lastSentAtMs < LIVENESS_INTERVAL_MS) {
-            return;
+        if (System.currentTimeMillis() - lastSentAtMs >= LIVENESS_INTERVAL_MS) {
+            sendLiveness();
         }
+    }
+
+    private void sendLiveness() {
         try {
             byte[] proto = Liveness.newBuilder()
                     .setJobId(jobId)
