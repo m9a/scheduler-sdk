@@ -1,0 +1,18 @@
+# control-plane.yaml — control-plane config (coordinator, minio, mlflow, registry).
+coordinator:
+  host: localhost
+  port: 9090
+  heartbeatTimeoutSeconds: 15      # declare a worker dead after this long without a heartbeat
+  heartbeatScanIntervalSeconds: 5  # how often to scan for dead workers
+
+minio:
+  endpoint: http://localhost:9000
+  accessKey: minioadmin
+  secretKey: minioadmin
+  bucket: scheduler
+
+mlflow:
+  healthUrl: http://localhost:5000/health   # used by the CLI readiness check
+
+registry:
+  url: http://localhost:5050

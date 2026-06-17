@@ -12,7 +12,7 @@ from pytorch_lightning import LightningModule, LightningDataModule, Trainer
 from torch.utils.data import DataLoader, random_split
 from torchvision import datasets, transforms
 
-from job_runner import job, task
+from job_runner import job, task, on_shutdown
 
 
 class MnistModel(LightningModule):
@@ -107,3 +107,10 @@ class MnistTrainingJob:
     def export(self, ctx):
         torch.save(self.model.state_dict(), "/workspace/output/model.pt")
         print("Model saved to /workspace/output/model.pt")
+
+    @on_shutdown
+    def on_shutdown(self, ctx):
+        # Worker is terminating us (SIGTERM) — checkpoint so the run isn't lost.
+        if self.model is not None:
+            torch.save(self.model.state_dict(), "/workspace/output/checkpoint.pt")
+            ctx.event("checkpoint_saved", "on shutdown")

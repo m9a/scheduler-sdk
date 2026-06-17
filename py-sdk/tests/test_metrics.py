@@ -8,6 +8,11 @@ from scheduler.v1 import common_pb2
 from scheduler.v1 import job_callback_pb2
 
 
+def _status_frames(mock_ws, status_tag):
+    """Status frames sent on the socket (excludes fire-and-forget liveness pings)."""
+    return [c[0][0] for c in mock_ws.send_binary.call_args_list if c[0][0][0] == status_tag]
+
+
 class TestSetupMlflow:
 
     def test_noop_when_mlflow_not_installed(self, monkeypatch):
@@ -62,13 +67,11 @@ class TestReporterSendsBinaryProto:
         reporter = Reporter("ws://localhost:8080", "job-123")
         reporter.task_started(0, "extract")
 
-        calls = mock_ws.send_binary.call_args_list
-        assert len(calls) == 1
+        statuses = _status_frames(mock_ws, TYPE_TAG_STATUS)
+        assert len(statuses) == 1
 
-        data = calls[0][0][0]
-        assert data[0] == TYPE_TAG_STATUS
         msg = job_callback_pb2.StatusUpdate()
-        msg.ParseFromString(data[1:])
+        msg.ParseFromString(statuses[0][1:])
         assert msg.job_id == "job-123"
         assert msg.task_index == 0
         assert msg.task_name == "extract"
@@ -88,13 +91,11 @@ class TestReporterSendsBinaryProto:
         reporter.task_started(0, "extract")
         reporter.task_completed(0, "extract")
 
-        calls = mock_ws.send_binary.call_args_list
-        assert len(calls) == 2
+        statuses = _status_frames(mock_ws, TYPE_TAG_STATUS)
+        assert len(statuses) == 2
 
-        data = calls[1][0][0]
-        assert data[0] == TYPE_TAG_STATUS
         msg = job_callback_pb2.StatusUpdate()
-        msg.ParseFromString(data[1:])
+        msg.ParseFromString(statuses[1][1:])
         assert msg.task_state == common_pb2.TASK_STATE_COMPLETED
         assert msg.duration_ms >= 0
 
@@ -112,12 +113,11 @@ class TestReporterSendsBinaryProto:
         reporter.task_started(0, "extract")
         reporter.task_failed(0, "extract", "out of memory")
 
-        calls = mock_ws.send_binary.call_args_list
-        assert len(calls) == 2
+        statuses = _status_frames(mock_ws, TYPE_TAG_STATUS)
+        assert len(statuses) == 2
 
-        data = calls[1][0][0]
         msg = job_callback_pb2.StatusUpdate()
-        msg.ParseFromString(data[1:])
+        msg.ParseFromString(statuses[1][1:])
         assert msg.task_state == common_pb2.TASK_STATE_FAILED
         assert msg.error_message == "out of memory"
 

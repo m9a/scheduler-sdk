@@ -42,6 +42,15 @@ def after_job(method):
     return method
 
 
+def on_shutdown(method):
+    """Method decorator for a graceful-shutdown hook. Runs (best-effort) when the
+    worker terminates the container (SIGTERM) before the SIGKILL grace expires —
+    not on normal completion. Use it to flush a checkpoint to /workspace/output
+    or emit a final event. Takes (self) or (self, ctx). At most one per class."""
+    method._on_shutdown = True
+    return method
+
+
 def _snake_case(name):
     """CamelCase to snake_case: 'DailySalesEtlJob' -> 'daily_sales_etl_job'."""
     return re.sub(r"(?<=[a-z0-9])([A-Z])", r"_\1", name).lower()

@@ -1,0 +1,37 @@
+# worker.yaml — worker config (the worker is not part of the control plane).
+coordinator:
+  host: localhost
+  port: 9090
+  heartbeatIntervalSeconds: 5   # keep below the control plane's heartbeatTimeoutSeconds
+  pollIntervalSeconds: 5        # how often the worker asks for a job
+
+hostname: host.docker.internal
+port: 0                          # 0 = ephemeral callback port
+
+jobExecutionTimeoutMinutes: 10   # hard deadline before the worker kills a job
+
+# What this worker advertises to the coordinator for placement.
+resources:
+  memory: 8192
+  cpu: 8
+  gpu: false
+  capabilities: []
+
+docker:
+  network: scheduler-net
+
+minio:
+  endpoint: http://localhost:9000
+  accessKey: minioadmin
+  secretKey: minioadmin
+  bucket: scheduler
+
+mlflow:
+  trackingUri: http://mlflow:5000   # reachable from job containers on the docker network
+
+liveness:
+  startupTimeoutSeconds: 30
+  pingIntervalSeconds: 15
+  maxMissedPings: 3
+  autoKill: true
+  shutdownGraceSeconds: 10

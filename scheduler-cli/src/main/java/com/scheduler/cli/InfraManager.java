@@ -34,7 +34,8 @@ class InfraManager implements AutoCloseable {
     };
 
     private Path composePath;
-    private Path configFile;
+    private Path controlPlaneFile;
+    private Path workerFile;
     private CliConfig config;
     private Path logFile;
     private PrintWriter logWriter;
@@ -73,17 +74,34 @@ class InfraManager implements AutoCloseable {
         }
     }
 
-    // The same config.yaml is consumed by both the worker (coordinator/docker/minio/mlflow)
-    // and the CLI's readiness checks below, so service URLs live in one place.
+    // Two configs, one per entity: control-plane.yaml feeds the coordinator (and the
+    // CLI's readiness checks below), worker.yaml feeds the worker. Each file's path
+    // comes from its env var, the same one the child process and the CLI read.
     private void extractConfig() throws IOException {
-        configFile = SCHEDULER_DIR.resolve("config.yaml");
-        try (InputStream in = getClass().getResourceAsStream("/config.yaml")) {
-            if (in == null) {
-                throw new IOException("config.yaml not found in JAR resources");
-            }
-            Files.copy(in, configFile, StandardCopyOption.REPLACE_EXISTING);
+        controlPlaneFile = seedConfig("control-plane.yaml", "CONTROL_PLANE_CONFIG");
+        workerFile = seedConfig("worker.yaml", "WORKER_CONFIG");
+        config = CliConfig.load(controlPlaneFile);
+    }
+
+    // Seeds bundled defaults at the env-named path only if absent, so user edits survive.
+    private Path seedConfig(String resource, String envVar) throws IOException {
+        String dest = System.getenv(envVar);
+        if (dest == null || dest.isBlank()) {
+            throw new IOException(envVar + " must be set to the path for " + resource);
         }
-        config = CliConfig.load(configFile);
+        Path destPath = Path.of(dest);
+        if (Files.notExists(destPath)) {
+            if (destPath.getParent() != null) {
+                Files.createDirectories(destPath.getParent());
+            }
+            try (InputStream in = getClass().getResourceAsStream("/" + resource)) {
+                if (in == null) {
+                    throw new IOException(resource + " not found in JAR resources");
+                }
+                Files.copy(in, destPath);
+            }
+        }
+        return destPath;
     }
 
     private void extractMetricsFiles() throws IOException {
@@ -150,11 +168,12 @@ class InfraManager implements AutoCloseable {
     }
 
     private void startCoordinator(String jarPath) throws IOException {
-        int port = config.getCoordinator().getPort();
-        log("Starting coordinator (port " + port + ")...");
-        ProcessBuilder pb = new ProcessBuilder(
-                "java", "-jar", jarPath, String.valueOf(port))
+        // Coordinator reads everything (including its port) from control-plane.yaml,
+        // located via the CONTROL_PLANE_CONFIG env var — one source, no args.
+        log("Starting coordinator (port " + config.getCoordinator().getPort() + ")...");
+        ProcessBuilder pb = new ProcessBuilder("java", "-jar", jarPath)
                 .redirectErrorStream(true);
+        pb.environment().put("CONTROL_PLANE_CONFIG", controlPlaneFile.toString());
         coordinatorProcess = pb.start();
         streamOutputAsync(coordinatorProcess.getInputStream(), "coordinator");
     }
@@ -179,9 +198,9 @@ class InfraManager implements AutoCloseable {
     private void startWorker(String jarPath) throws IOException {
         log("Starting worker...");
 
-        ProcessBuilder pb = new ProcessBuilder(
-                "java", "-jar", jarPath, "--config", configFile.toString())
+        ProcessBuilder pb = new ProcessBuilder("java", "-jar", jarPath)
                 .redirectErrorStream(true);
+        pb.environment().put("WORKER_CONFIG", workerFile.toString());
         workerProcess = pb.start();
         streamOutputAsync(workerProcess.getInputStream(), "worker");
         // Give the worker a moment to register
