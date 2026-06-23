@@ -1,7 +1,9 @@
 # control-plane.yaml — control-plane config (coordinator, minio, mlflow, registry).
 coordinator:
   host: localhost
-  port: 9090
+  port: 9090                       # gRPC: client + worker APIs
+  httpPort: 8080                   # serves the UI (/) + pull-only JSON read API (/api/*)
+  uiDir: ""                        # built UI static files (Vite dist/); empty → API-only
   heartbeatTimeoutSeconds: 15      # declare a worker dead after this long without a heartbeat
   heartbeatScanIntervalSeconds: 5  # how often to scan for dead workers
 

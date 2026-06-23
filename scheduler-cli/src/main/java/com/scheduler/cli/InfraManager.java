@@ -8,7 +8,10 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.Comparator;
 import java.util.concurrent.TimeUnit;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
 
 /**
  * Manages the lifecycle of all infrastructure: docker-compose services
@@ -36,6 +39,8 @@ class InfraManager implements AutoCloseable {
     private Path composePath;
     private Path controlPlaneFile;
     private Path workerFile;
+    // Where the bundled UI was unpacked, or null when no UI ships in the jar.
+    private Path uiDir;
     private CliConfig config;
     private Path logFile;
     private PrintWriter logWriter;
@@ -54,7 +59,9 @@ class InfraManager implements AutoCloseable {
         logWriter = new PrintWriter(new FileWriter(logFile.toFile()), true);
 
         extractComposeFile();
+        extractUi();
         extractConfig();
+        configureUiDir();
         extractMetricsFiles();
         startDockerCompose();
         waitForServices();
@@ -71,6 +78,74 @@ class InfraManager implements AutoCloseable {
                 throw new IOException("docker-compose.control-plane.yml not found in JAR resources");
             }
             Files.copy(in, composePath, StandardCopyOption.REPLACE_EXISTING);
+        }
+    }
+
+    // The monitoring UI ships as ui.zip in the jar and is unpacked into
+    // ~/.scheduler/ui each run; the coordinator serves it (config uiDir). When no
+    // ui.zip is bundled the coordinator simply runs API-only.
+    private void extractUi() throws IOException {
+        Path dest = SCHEDULER_DIR.resolve("ui");
+        try (InputStream in = getClass().getResourceAsStream("/ui.zip")) {
+            if (in == null) {
+                log("No bundled UI (ui.zip); coordinator will run API-only");
+                uiDir = null;
+                return;
+            }
+            if (Files.isDirectory(dest)) {
+                deleteRecursively(dest);
+            }
+            Files.createDirectories(dest);
+            unzip(in, dest);
+            uiDir = dest;
+            log("Unpacked UI to " + dest);
+        }
+    }
+
+    // Point the coordinator's control-plane.yaml at the unpacked UI. Only fills the
+    // empty default (uiDir: "") so an explicit user path is preserved; done as a
+    // string replace so the file's comments survive. This keeps one config source —
+    // the coordinator still reads uiDir from this file; the CLI only supplies the
+    // machine-specific path it can't know at build time.
+    private void configureUiDir() throws IOException {
+        if (uiDir == null) {
+            return;
+        }
+        String content = Files.readString(controlPlaneFile);
+        if (content.contains("uiDir: \"\"")) {
+            Files.writeString(controlPlaneFile, content.replace("uiDir: \"\"", "uiDir: \"" + uiDir + "\""));
+        }
+    }
+
+    private static void unzip(InputStream in, Path destDir) throws IOException {
+        try (ZipInputStream zip = new ZipInputStream(in)) {
+            ZipEntry entry;
+            while ((entry = zip.getNextEntry()) != null) {
+                Path out = destDir.resolve(entry.getName()).normalize();
+                // Refuse entries that would escape destDir (zip-slip).
+                if (!out.startsWith(destDir)) {
+                    throw new IOException("Zip entry escapes target dir: " + entry.getName());
+                }
+                if (entry.isDirectory()) {
+                    Files.createDirectories(out);
+                } else {
+                    Files.createDirectories(out.getParent());
+                    Files.copy(zip, out, StandardCopyOption.REPLACE_EXISTING);
+                }
+                zip.closeEntry();
+            }
+        }
+    }
+
+    private static void deleteRecursively(Path dir) throws IOException {
+        try (var paths = Files.walk(dir)) {
+            paths.sorted(Comparator.reverseOrder()).forEach(p -> {
+                try {
+                    Files.delete(p);
+                } catch (IOException e) {
+                    throw new UncheckedIOException(e);
+                }
+            });
         }
     }
 
@@ -142,6 +217,9 @@ class InfraManager implements AutoCloseable {
     private void logUiUrls() {
         log("");
         log("Stack ready. UIs:");
+        if (uiDir != null) {
+            log("  Scheduler UI:          http://localhost:" + config.getCoordinator().getHttpPort());
+        }
         log("  Grafana (dashboards):  " + GRAFANA_URL);
         log("  Prometheus:            " + PROMETHEUS_URL);
         log("  MinIO console:         http://localhost:9001");

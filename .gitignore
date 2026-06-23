@@ -2,6 +2,9 @@ target/
 !**/src/main/**/target/
 !**/src/test/**/target/
 
+### Generated UI bundle (produced by scripts/bundle-ui.sh) ###
+scheduler-cli/src/main/resources/ui.zip
+
 ### Java ###
 *.class
 *.jar
