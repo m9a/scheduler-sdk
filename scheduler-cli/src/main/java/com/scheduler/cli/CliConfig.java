@@ -41,11 +41,14 @@ class CliConfig {
     public static class Coordinator {
         private String host = "localhost";
         private int port = 9090;
+        private int httpPort = 8080;
 
         public String getHost() { return host; }
         public void setHost(String host) { this.host = host; }
         public int getPort() { return port; }
         public void setPort(int port) { this.port = port; }
+        public int getHttpPort() { return httpPort; }
+        public void setHttpPort(int httpPort) { this.httpPort = httpPort; }
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)

@@ -1,3 +1,11 @@
+# Self-contained control-plane stack launched by the CLI (InfraManager runs
+# `docker compose up -d` directly). Unlike the scheduler repo's profile-gated
+# template (driven by scripts/control-plane.sh), every service here starts
+# unconditionally — the CLI is an all-in-one local launcher and waits on mlflow,
+# so the stacks are NOT behind compose profiles. CLI-only extra: a local
+# registry on 5050 for `docker push`. Coordinator/worker run on the host (the
+# CLI spawns them as Java processes), not in this compose. Values fall back to
+# the defaults below but honor env overrides for parity with the repo template.
 services:
 
   minio:
@@ -7,8 +15,8 @@ services:
       - "9000:9000"
       - "9001:9001"
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin}
     volumes:
       - minio-data:/data
     networks:
@@ -46,7 +54,7 @@ services:
       - postgres
       - minio
     ports:
-      - "5000:5000"
+      - "${MLFLOW_PORT:-5000}:5000"
     environment:
       MLFLOW_S3_ENDPOINT_URL: http://minio:9000
       AWS_ACCESS_KEY_ID: minioadmin
@@ -75,7 +83,7 @@ services:
   prometheus:
     image: prom/prometheus:v2.53.0
     ports:
-      - "9095:9090"
+      - "${PROMETHEUS_PORT:-9095}:9090"
     volumes:
       - ./metrics/prometheus.yml:/etc/prometheus/prometheus.yml:ro
     # Coordinator/worker run on the host (the CLI launches them as Java processes) —
@@ -90,7 +98,7 @@ services:
     depends_on:
       - prometheus
     ports:
-      - "3000:3000"
+      - "${GRAFANA_PORT:-3000}:3000"
     environment:
       GF_AUTH_ANONYMOUS_ENABLED: "true"
       GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
