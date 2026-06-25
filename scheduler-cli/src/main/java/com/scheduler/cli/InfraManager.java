@@ -102,7 +102,7 @@ class InfraManager implements AutoCloseable {
         }
     }
 
-    // Point the coordinator's control-plane.yaml at the unpacked UI. Only fills the
+    // Point the coordinator's control_plane_config.yaml at the unpacked UI. Only fills the
     // empty default (uiDir: "") so an explicit user path is preserved; done as a
     // string replace so the file's comments survive. This keeps one config source —
     // the coordinator still reads uiDir from this file; the CLI only supplies the
@@ -149,12 +149,12 @@ class InfraManager implements AutoCloseable {
         }
     }
 
-    // Two configs, one per entity: control-plane.yaml feeds the coordinator (and the
-    // CLI's readiness checks below), worker.yaml feeds the worker. Each file's path
+    // Two configs, one per entity: control_plane_config.yaml feeds the coordinator (and the
+    // CLI's readiness checks below), worker_config.yaml feeds the worker. Each file's path
     // comes from its env var, the same one the child process and the CLI read.
     private void extractConfig() throws IOException {
-        controlPlaneFile = seedConfig("control-plane.yaml", "CONTROL_PLANE_CONFIG");
-        workerFile = seedConfig("worker.yaml", "WORKER_CONFIG");
+        controlPlaneFile = seedConfig("control_plane_config.yaml", "CONTROL_PLANE_CONFIG");
+        workerFile = seedConfig("worker_config.yaml", "WORKER_CONFIG");
         config = CliConfig.load(controlPlaneFile);
     }
 
@@ -246,7 +246,7 @@ class InfraManager implements AutoCloseable {
     }
 
     private void startCoordinator(String jarPath) throws IOException {
-        // Coordinator reads everything (including its port) from control-plane.yaml,
+        // Coordinator reads everything (including its port) from control_plane_config.yaml,
         // located via the CONTROL_PLANE_CONFIG env var — one source, no args.
         log("Starting coordinator (port " + config.getCoordinator().getPort() + ")...");
         ProcessBuilder pb = new ProcessBuilder("java", "-jar", jarPath)

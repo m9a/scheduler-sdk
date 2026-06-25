@@ -29,7 +29,7 @@ public class SchedulerCli implements Runnable {
         if (config == null) {
             String path = System.getenv("CONTROL_PLANE_CONFIG");
             if (path == null || path.isBlank()) {
-                throw new IllegalStateException("CONTROL_PLANE_CONFIG must point to control-plane.yaml");
+                throw new IllegalStateException("CONTROL_PLANE_CONFIG must point to control_plane_config.yaml");
             }
             try {
                 config = CliConfig.load(Path.of(path));

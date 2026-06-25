@@ -8,9 +8,9 @@ import java.io.IOException;
 import java.nio.file.Path;
 
 /**
- * YAML-backed config for the CLI, read from control-plane.yaml (the control-plane
+ * YAML-backed config for the CLI, read from control_plane_config.yaml (the control-plane
  * settings the client and readiness checks need). Worker settings live in
- * worker.yaml and are not read here.
+ * worker_config.yaml and are not read here.
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 class CliConfig {
