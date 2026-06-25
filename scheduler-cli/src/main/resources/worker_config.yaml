@@ -1,4 +1,4 @@
-# worker.yaml — worker config (the worker is not part of the control plane).
+# worker_config.yaml — worker config (the worker is not part of the control plane).
 coordinator:
   host: localhost
   port: 9090
@@ -7,6 +7,8 @@ coordinator:
 
 hostname: host.docker.internal
 port: 0                          # 0 = ephemeral callback port
+
+checkpointPath: worker_checkpoint.yaml   # holds the stable workerId (generated on first boot)
 
 jobExecutionTimeoutMinutes: 10   # hard deadline before the worker kills a job
 
