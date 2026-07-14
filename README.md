@@ -16,8 +16,34 @@ docker run ... <artifactUri>  →   SDK reads EXECUTION_PAYLOAD env var
 
 1. WorkerAgent spawns a Docker container with `EXECUTION_PAYLOAD` (base64 JSON containing `workerAgentUrl`, `jobId`, `params`)
 2. The SDK decodes the payload, constructs the `@job` class, and runs its `@task` methods in `order`
-3. Task status (`0x01`) and key-value telemetry (`0x03`) are sent as binary proto over WebSocket — telemetry on one persistent connection, each status frame on its own short-lived connection (loss-proof for state transitions)
+3. Task status (`0x01`) and key-value telemetry (`0x03`) are sent as binary proto over one persistent WebSocket connection
 4. WorkerAgent forwards updates to the coordinator via gRPC
+
+### SDK delivery guarantees
+
+Status updates drive the job state machine, so they must not be lost. Telemetry may be.
+
+A status update is one `[0x01][StatusUpdate]` message: a task moved to RUNNING, COMPLETED, or FAILED.
+
+**What the SDK does for durability:**
+
+- Each status update goes into an in-memory FIFO queue. A sender thread delivers them in order.
+- An update leaves the queue only on the worker's ack (`0x02`). The worker acks after writing its state store, so an ack means the update is durable on the worker.
+- If delivery fails, the SDK opens a fresh connection — with backoff + jitter, 0.5s → 30s — and resends from the queue head, forever. The worker de-dupes, so a resend after a lost ack is safe.
+- Task threads never block on delivery: if the worker is down (e.g. restarting), tasks keep running and updates queue up.
+- At exit the SDK drains the queue before closing — it waits for the worker to come back rather than lose a terminal state.
+- Telemetry and liveness pings get none of this: fire-and-forget on the same connection, dropped while the worker is down.
+
+**How delivery fails and what the SDK sees:**
+
+| Scenario | What the SDK sees |
+|----------|-------------------|
+| Worker process restarted / crashed | The OS closed the worker's sockets — the next socket write throws |
+| Network broken between container and worker | Socket write throws, or times out |
+| Worker host lost power / network silently dropped | Nothing — the connection is half-open. The write "succeeds" locally but no ack arrives within 10s |
+| Worker up but slow (busy, slow state store) | Write succeeds, no ack within 10s |
+
+The last two are indistinguishable from the SDK, so every failure gets the same treatment: reconnect and resend. That is safe in all four cases — a slow-but-alive worker just accepts the new connection and de-dupes the duplicate. The 10s ack timeout is the slow-worker allowance: writing one row and forwarding one message should never take that long.
 
 ## Writing a job
 

@@ -31,5 +31,12 @@
             <artifactId>junit-jupiter</artifactId>
             <scope>test</scope>
         </dependency>
+        <!-- Embedded WS server standing in for the worker's JobCallbackServer in reconnect tests. -->
+        <dependency>
+            <groupId>org.java-websocket</groupId>
+            <artifactId>Java-WebSocket</artifactId>
+            <version>1.5.7</version>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 </project>
