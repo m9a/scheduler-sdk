@@ -35,23 +35,50 @@ import java.util.concurrent.TimeUnit;
  *        └─ taskCompleted(output)        ──[0x01]──► WorkerAgent ──[0x02 ack]──►
  * </pre>
  *
- * <p>Status updates ({@code [0x01][StatusUpdate]}: a task moved to
- * RUNNING/COMPLETED/FAILED) drive the job state machine, so they must not be
- * lost. Each one goes into an in-memory FIFO queue; a sender thread delivers
- * them in order and pops one only after the worker's one-byte ack (the worker
- * acks after writing its state store, so an ack means the update is durable).
- * Delivery fails two ways: the socket write throws (connection broken) or no
- * ack arrives within {@code ACK_TIMEOUT_MS} (worker slow, or the connection is
- * half-open). Either way the sender opens a fresh connection with capped
- * backoff + jitter and resends from the queue head — forever. Task threads
- * never block on delivery: tasks keep running while the worker is down and the
- * queue holds every un-acked update. {@link #close()} drains the queue before
- * exiting so terminal updates survive a worker restart. The worker de-dupes,
- * so a resend after a lost ack is safe.
+ * <p>A status update is one {@code [0x01][StatusUpdate]} frame: a task moved to
+ * RUNNING, COMPLETED, or FAILED. These drive the job state machine and must not
+ * be lost. Telemetry is fire-and-forget (lossy by design).
  *
- * <p>Telemetry is fire-and-forget (lossy by design). All sends are serialized
- * on {@code sendLock}: the HttpClient WebSocket permits one in-flight send, and
- * the ack correlation assumes one outstanding status frame at a time.
+ * <p><b>Threading model — three threads:</b>
+ * <ul>
+ *   <li>Task thread (the harness). Appends each status update to the queue and
+ *       returns. Never blocks on delivery — tasks keep running while the worker
+ *       is down.</li>
+ *   <li>Sender thread. The only thread that delivers status updates. Takes the
+ *       queue head, sends it, waits for the worker's ack, pops it only after
+ *       the ack arrives.</li>
+ *   <li>Liveness thread. Pings the worker every {@code LIVENESS_INTERVAL_MS}
+ *       when nothing else was sent.</li>
+ * </ul>
+ *
+ * <p><b>Two locks, never nested:</b>
+ * <ul>
+ *   <li>{@code statusQueue} monitor — guards queue state. Held for microseconds:
+ *       add, peek, pop, or wait for a change.</li>
+ *   <li>{@code sendLock} — guards the socket. The HttpClient WebSocket permits
+ *       one in-flight send, and the ack correlation assumes one outstanding
+ *       status frame; so every send (status, telemetry, liveness) takes this
+ *       lock.</li>
+ * </ul>
+ *
+ * <p><b>Delivery and failure:</b>
+ * <ul>
+ *   <li>An ack means durable: the worker acks only after writing its state store.</li>
+ *   <li>A send fails two ways: the socket write throws (connection broken), or
+ *       no ack within {@code ACK_TIMEOUT_MS} (worker slow, or half-open link).</li>
+ *   <li>Either way the sender closes the socket, reconnects with capped backoff
+ *       + jitter, and resends from the queue head — forever. The worker de-dupes,
+ *       so a resend after a lost ack is safe.</li>
+ * </ul>
+ *
+ * <p><b>Who blocks:</b>
+ * <ul>
+ *   <li>Task thread: never (queue append only).</li>
+ *   <li>Sender thread: on the ack (up to {@code ACK_TIMEOUT_MS}) and on the
+ *       reconnect backoff — that is its job.</li>
+ *   <li>{@link #close()}: until the queue is drained (every update acked).
+ *       Deliberate — exiting early would lose the terminal state.</li>
+ * </ul>
  */
 public final class JobReporter {
 

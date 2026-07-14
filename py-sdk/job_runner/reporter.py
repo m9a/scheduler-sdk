@@ -13,22 +13,45 @@ connection. Mirrors the Java SDK.
            └─ task_completed()    ── ws: [0x01][StatusUpdate]  ──► WorkerAgent
                                       ◄── ws: [0x02 ack] ──────────
 
-Status updates ([0x01][StatusUpdate]: a task moved to RUNNING/COMPLETED/FAILED)
-drive the job state machine, so they must not be lost. Each one goes into an
-in-memory FIFO queue; a sender thread delivers them in order and pops one only
-after the worker's ack (the worker acks after writing its state store, so an ack
-means the update is durable). Delivery fails two ways: the socket write throws
-(connection broken) or no ack arrives within ACK_TIMEOUT_S (worker slow, or the
-connection is half-open). Either way the sender opens a fresh connection with
-capped backoff + jitter and resends from the queue head -- forever. Task threads
-never block on delivery: tasks keep running while the worker is down and the
-queue holds every un-acked update.
-close() drains the queue before exiting so terminal updates survive a worker
-restart. The worker de-dupes, so a resend after a lost ack is safe.
+A status update is one [0x01][StatusUpdate] frame: a task moved to RUNNING,
+COMPLETED, or FAILED. These drive the job state machine and must not be lost.
+Telemetry is fire-and-forget (lossy by design).
 
-Telemetry is fire-and-forget. Reports are throttled: at most one frame per
-REPORT_INTERVAL_S, keeping only the latest value per key (older numbers dropped
--- full history goes to MLflow). EVENT entries force an immediate flush.
+Threading model -- three threads:
+- Task thread (the executor). Appends each status update to the queue and
+  returns. Never blocks on delivery -- tasks keep running while the worker
+  is down.
+- Sender thread. The only thread that delivers status updates. Takes the
+  queue head, sends it, waits for the worker's ack, pops it only after the
+  ack arrives.
+- Liveness thread. Pings the worker every LIVENESS_INTERVAL_S when nothing
+  else was sent.
+
+Two locks, never nested:
+- _queue_cond -- guards queue state. Held for microseconds: add, peek, pop,
+  or wait for a change.
+- _send_lock -- guards the socket. One frame on the wire at a time, and the
+  ack correlation assumes one outstanding status frame; so every send
+  (status, telemetry, liveness) takes this lock.
+
+Delivery and failure:
+- An ack means durable: the worker acks only after writing its state store.
+- A send fails two ways: the socket write raises (connection broken), or no
+  ack within ACK_TIMEOUT_S (worker slow, or half-open link).
+- Either way the sender closes the socket, reconnects with capped backoff +
+  jitter, and resends from the queue head -- forever. The worker de-dupes,
+  so a resend after a lost ack is safe.
+
+Who blocks:
+- Task thread: never (queue append only).
+- Sender thread: on the ack (up to ACK_TIMEOUT_S) and on the reconnect
+  backoff -- that is its job.
+- close(): until the queue is drained (every update acked). Deliberate --
+  exiting early would lose the terminal state.
+
+Reports are throttled: at most one frame per REPORT_INTERVAL_S, keeping only
+the latest value per key (older numbers dropped -- full history goes to
+MLflow). EVENT entries force an immediate flush.
 """
 
 import collections
