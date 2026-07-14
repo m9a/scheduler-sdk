@@ -1,5 +1,6 @@
 import os
 import sys
+import threading
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -66,6 +67,7 @@ class TestReporterSendsBinaryProto:
 
         reporter = Reporter("ws://localhost:8080", "job-123")
         reporter.task_started(0, "extract")
+        reporter.close()  # drains the async status queue before we assert
 
         statuses = _status_frames(mock_ws, TYPE_TAG_STATUS)
         assert len(statuses) == 1
@@ -76,8 +78,6 @@ class TestReporterSendsBinaryProto:
         assert msg.task_index == 0
         assert msg.task_name == "extract"
         assert msg.task_state == common_pb2.TASK_STATE_RUNNING
-
-        reporter.close()
 
     @patch("job_runner.reporter.websocket.WebSocket")
     def test_task_completed_sends_binary_status(self, MockWebSocket):
@@ -90,6 +90,7 @@ class TestReporterSendsBinaryProto:
         reporter = Reporter("ws://localhost:8080", "job-123")
         reporter.task_started(0, "extract")
         reporter.task_completed(0, "extract")
+        reporter.close()  # drains the async status queue before we assert
 
         statuses = _status_frames(mock_ws, TYPE_TAG_STATUS)
         assert len(statuses) == 2
@@ -98,8 +99,6 @@ class TestReporterSendsBinaryProto:
         msg.ParseFromString(statuses[1][1:])
         assert msg.task_state == common_pb2.TASK_STATE_COMPLETED
         assert msg.duration_ms >= 0
-
-        reporter.close()
 
     @patch("job_runner.reporter.websocket.WebSocket")
     def test_task_failed_includes_error(self, MockWebSocket):
@@ -112,6 +111,7 @@ class TestReporterSendsBinaryProto:
         reporter = Reporter("ws://localhost:8080", "job-123")
         reporter.task_started(0, "extract")
         reporter.task_failed(0, "extract", "out of memory")
+        reporter.close()  # drains the async status queue before we assert
 
         statuses = _status_frames(mock_ws, TYPE_TAG_STATUS)
         assert len(statuses) == 2
@@ -121,4 +121,41 @@ class TestReporterSendsBinaryProto:
         assert msg.task_state == common_pb2.TASK_STATE_FAILED
         assert msg.error_message == "out of memory"
 
-        reporter.close()
+
+class TestReporterReconnect:
+
+    @patch("job_runner.reporter.BACKOFF_INITIAL_S", 0.01)
+    @patch("job_runner.reporter.websocket.WebSocket")
+    def test_worker_restart_redelivers_queued_statuses(self, MockWebSocket):
+        """Worker dies mid-job: two task updates queue up while every send fails,
+        then the worker comes back and both arrive, in order, resent from the head."""
+        from job_runner.reporter import Reporter, TYPE_TAG_STATUS, TYPE_TAG_ACK
+
+        mock_ws = MagicMock()
+        mock_ws.recv.return_value = bytes([TYPE_TAG_ACK])
+        worker_up = threading.Event()
+        delivered = []
+
+        def send_binary(data):
+            if data[0] != TYPE_TAG_STATUS:
+                return  # liveness/telemetry: lossy, ignore
+            if not worker_up.is_set():
+                raise ConnectionError("worker down")
+            delivered.append(data)
+
+        mock_ws.send_binary.side_effect = send_binary
+        MockWebSocket.return_value = mock_ws
+
+        reporter = Reporter("ws://localhost:8080", "job-123")
+        reporter.task_started(0, "extract")     # queued; sends fail
+        reporter.task_completed(0, "extract")   # queued behind it; task thread never blocked
+        worker_up.set()                         # "restart" the worker
+        reporter.close()                        # drains the queue
+
+        assert len(delivered) == 2
+        first = job_callback_pb2.StatusUpdate()
+        first.ParseFromString(delivered[0][1:])
+        second = job_callback_pb2.StatusUpdate()
+        second.ParseFromString(delivered[1][1:])
+        assert first.task_state == common_pb2.TASK_STATE_RUNNING
+        assert second.task_state == common_pb2.TASK_STATE_COMPLETED

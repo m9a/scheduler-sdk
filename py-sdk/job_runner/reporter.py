@@ -13,13 +13,26 @@ connection. Mirrors the Java SDK.
            └─ task_completed()    ── ws: [0x01][StatusUpdate]  ──► WorkerAgent
                                       ◄── ws: [0x02 ack] ──────────
 
-Status frames drive the job state machine, so they must not be lost: each waits
-for the worker's ack and is resent on a fresh connection if it doesn't arrive.
+Status updates ([0x01][StatusUpdate]: a task moved to RUNNING/COMPLETED/FAILED)
+drive the job state machine, so they must not be lost. Each one goes into an
+in-memory FIFO queue; a sender thread delivers them in order and pops one only
+after the worker's ack (the worker acks after writing its state store, so an ack
+means the update is durable). Delivery fails two ways: the socket write throws
+(connection broken) or no ack arrives within ACK_TIMEOUT_S (worker slow, or the
+connection is half-open). Either way the sender opens a fresh connection with
+capped backoff + jitter and resends from the queue head -- forever. Task threads
+never block on delivery: tasks keep running while the worker is down and the
+queue holds every un-acked update.
+close() drains the queue before exiting so terminal updates survive a worker
+restart. The worker de-dupes, so a resend after a lost ack is safe.
+
 Telemetry is fire-and-forget. Reports are throttled: at most one frame per
 REPORT_INTERVAL_S, keeping only the latest value per key (older numbers dropped
 -- full history goes to MLflow). EVENT entries force an immediate flush.
 """
 
+import collections
+import random
 import threading
 import time
 from typing import Optional
@@ -41,7 +54,9 @@ TYPE_TAG_LIVENESS = 0x04
 REPORT_INTERVAL_S = 1.0
 # How long to wait for the worker's ack before resending a status frame.
 ACK_TIMEOUT_S = 10.0
-MAX_SEND_ATTEMPTS = 3
+# Reconnect backoff after a failed status send: doubles per failure, jittered.
+BACKOFF_INITIAL_S = 0.5
+BACKOFF_CAP_S = 30.0
 # How often to ping while a task runs (must be < the worker's stall probe interval).
 LIVENESS_INTERVAL_S = 15.0
 
@@ -61,8 +76,15 @@ class Reporter:
         # Drives the idle liveness ping: time of the last frame sent.
         self._last_send = time.monotonic()
         self._stop = threading.Event()
+        # Un-acked status frames, oldest first. The sender thread pops one only
+        # after the worker acks it; guarded by _queue_cond.
+        self._status_queue: collections.deque[bytes] = collections.deque()
+        self._queue_cond = threading.Condition()
         self._connect()
         self._send_liveness()  # initial ping so the worker sees proof-of-life promptly
+        self._sender_thread = threading.Thread(
+            target=self._sender_loop, name="status-sender", daemon=True)
+        self._sender_thread.start()
         self._liveness_thread = threading.Thread(
             target=self._liveness_loop, name="liveness-ping", daemon=True)
         self._liveness_thread.start()
@@ -76,8 +98,17 @@ class Reporter:
             self._ws = None
 
     def close(self) -> None:
-        self._stop.set()
         self.flush()
+        # Drain un-acked status updates before exiting -- waits as long as it
+        # takes for the worker to come back. Exiting with the queue non-empty
+        # would lose a state transition (a restarted worker fails the job as
+        # NOT_FOUND_ON_RECOVERY if the container is gone before delivery).
+        with self._queue_cond:
+            while self._status_queue:
+                self._queue_cond.wait()
+        self._stop.set()
+        with self._queue_cond:
+            self._queue_cond.notify_all()  # wakes the sender so it can exit
         if self._ws is not None:
             try:
                 self._ws.close()
@@ -161,34 +192,56 @@ class Reporter:
             msg.error_message = error
 
         payload = bytes([TYPE_TAG_STATUS]) + msg.SerializeToString()
-        self._send_with_ack(payload)
+        with self._queue_cond:
+            self._status_queue.append(payload)
+            self._queue_cond.notify_all()
 
-    def _send_with_ack(self, data: bytes) -> None:
-        """Sends a status frame on the persistent connection and waits for the
-        worker's ack, resending on a fresh connection if it doesn't arrive.
+    def _sender_loop(self) -> None:
+        """Delivers queued status frames in order, each confirmed by the worker's ack.
 
         Status updates drive the job state machine, so losing one is fatal to
         the job's outcome (a task stuck RUNNING fails the whole job). A half-open
         socket can swallow a send without raising — the ack is the only proof of
-        delivery.
+        delivery. So the head frame is popped only after its ack; a failure
+        reconnects with capped backoff + jitter and resends the head, forever.
+        The worker de-dupes, so resending after a lost ack is safe.
         """
-        last_error = None
+        backoff = BACKOFF_INITIAL_S
+        while True:
+            with self._queue_cond:
+                while not self._status_queue and not self._stop.is_set():
+                    self._queue_cond.wait()
+                if not self._status_queue:
+                    return  # stopped and drained
+                payload = self._status_queue[0]  # peek; pop only after the ack
+            if self._try_send_status(payload):
+                with self._queue_cond:
+                    self._status_queue.popleft()
+                    self._queue_cond.notify_all()  # wakes close() waiting for the drain
+                backoff = BACKOFF_INITIAL_S
+            else:
+                self._reset_connection()  # delivery unconfirmed — retry on a fresh socket
+                time.sleep(backoff * random.uniform(0.75, 1.25))
+                backoff = min(backoff * 2, BACKOFF_CAP_S)
+
+    def _try_send_status(self, data: bytes) -> bool:
+        """One send + ack-wait attempt on the current connection."""
         with self._send_lock:
             self._last_send = time.monotonic()  # any send counts as activity
-            for _ in range(MAX_SEND_ATTEMPTS):
-                try:
-                    if self._ws is None:
-                        self._connect()
-                    self._ws.settimeout(ACK_TIMEOUT_S)
-                    self._ws.send_binary(data)
-                    ack = self._ws.recv()  # worker's only inbound frame is the ack
-                    if ack and ack[0] == TYPE_TAG_ACK:
-                        return
-                    last_error = RuntimeError(f"unexpected ack frame: {ack!r}")
-                except Exception as e:
-                    last_error = e
-                self._reset_connection()  # delivery unconfirmed — retry on a fresh socket
-        print(f"[job_runner] status send failed after {MAX_SEND_ATTEMPTS} attempts: {last_error}")
+            try:
+                if self._ws is None:
+                    self._connect()
+                if self._ws is None:
+                    return False  # _connect already logged the failure
+                self._ws.settimeout(ACK_TIMEOUT_S)
+                self._ws.send_binary(data)
+                ack = self._ws.recv()  # worker's only inbound frame is the ack
+                if ack and ack[0] == TYPE_TAG_ACK:
+                    return True
+                print(f"[job_runner] unexpected ack frame: {ack!r}")
+            except Exception as e:
+                print(f"[job_runner] status send failed, will reconnect: {e}")
+            return False
 
     def _send_binary(self, data: bytes) -> None:
         """Sends a telemetry/liveness frame (fire-and-forget — lossy by design)."""
