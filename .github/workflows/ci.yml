@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+
+jobs:
+  java:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: scheduler-sdk
+      # Sibling repo: scheduler-proto is the single proto source of truth.
+      - uses: actions/checkout@v4
+        with:
+          repository: m9a/scheduler
+          path: scheduler
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - name: Install scheduler-proto jar
+        run: mvn -B install -pl scheduler-proto -am -DskipTests
+        working-directory: scheduler
+      - name: Test
+        run: mvn -B test
+        working-directory: scheduler-sdk
+
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install 'protobuf>=4.25' websocket-client pytest
+      - name: Test
+        run: python -m pytest tests/ -q
+        working-directory: py-sdk
