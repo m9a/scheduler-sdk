@@ -36,7 +36,8 @@ class TestSetupMlflow:
         """Raises RuntimeError when mlflow is installed but MLFLOW_TRACKING_URI is missing."""
         monkeypatch.delenv("MLFLOW_TRACKING_URI", raising=False)
 
-        with patch("builtins.__import__", wraps=__import__):
+        # Mock mlflow so the test doesn't depend on it being installed (CI doesn't have it).
+        with patch.dict(sys.modules, {"mlflow": MagicMock()}):
             from job_runner.metrics import setup_mlflow
             with pytest.raises(RuntimeError, match="MLFLOW_TRACKING_URI not set"):
                 setup_mlflow("my-job", "job-123")
